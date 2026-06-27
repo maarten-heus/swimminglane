@@ -38,10 +38,6 @@ const HUD_X = 500;
 const LANE_COUNT = 5;
 const LANE_WIDTH = 80;
 
-const SUB_LANES_PER_LANE = 5;
-const SUB_LANE_WIDTH = LANE_WIDTH / SUB_LANES_PER_LANE;
-const TOTAL_SUB_LANES = LANE_COUNT * SUB_LANES_PER_LANE;
-
 const SWIMMER_SIZE = 14;
 const PLAYER_SIZE = 14;
 
@@ -72,6 +68,22 @@ const LADDERS = [
   { name: "links midden", side: "left", x: POOL_X - 18, y: POOL_Y + 340 },
   { name: "rechts midden", side: "right", x: POOL_X + POOL_WIDTH + 2, y: POOL_Y + 340 }
 ];
+
+// =====================================================
+// DYNAMIC SUBLANE CONFIG
+// =====================================================
+
+function getSubLanesPerLane() {
+  return level < 10 ? 3 : 5;
+}
+
+function getSubLaneWidth() {
+  return LANE_WIDTH / getSubLanesPerLane();
+}
+
+function getTotalSubLanes() {
+  return LANE_COUNT * getSubLanesPerLane();
+}
 
 // =====================================================
 // GAME STATE
@@ -126,16 +138,23 @@ function updateOverlay() {
   }
 }
 
-function resetForNextLevel() {
+function resetForNextLevel(oldSubLaneCount, newSubLaneCount) {
   lanesThisLevel = 0;
   hits = 0;
   hitCooldown = 0;
+  timeLeft = 90;
 
   player.penaltyTimer = 0;
   player.color = "blue";
   player.divesLeft = MAX_DIVES_PER_LEVEL;
   player.isDiving = false;
   player.diveTimer = 0;
+
+  player.globalSubLane = globalSubLaneFromLaneAndSub(
+    2,
+    Math.floor(getSubLanesPerLane() / 2)
+  );
+  player.x = xForGlobalSubLane(player.globalSubLane);
 
   swimmers.forEach(s => {
     s.penaltyTimer = 0;
@@ -146,6 +165,10 @@ function resetForNextLevel() {
 
   pairCollisionCounts = {};
   pairCollisionCooldowns = {};
+
+  if (oldSubLaneCount !== newSubLaneCount) {
+    populateInitialSwimmers();
+  }
 }
 
 function checkLevelProgress() {
@@ -154,18 +177,26 @@ function checkLevelProgress() {
   if (lanesThisLevel < LANES_PER_LEVEL) return;
 
   const clearedLevel = level;
+  const oldSubLaneCount = getSubLanesPerLane();
 
   showOverlay("LEVEL " + clearedLevel + " CLEARED", 150, () => {
     if (clearedLevel >= MAX_LEVEL) {
       gameFinished = true;
-      showOverlay("GOED GEZWOMMEN!", 300, () => {
-        gamePaused = true;
-      });
+      overlay = {
+        text: "GOED GEZWOMMEN!",
+        timer: 999999,
+        duration: 999999,
+        onDone: null
+      };
+      gamePaused = true;
       return;
     }
 
     level++;
-    resetForNextLevel();
+
+    const newSubLaneCount = getSubLanesPerLane();
+
+    resetForNextLevel(oldSubLaneCount, newSubLaneCount);
     gamePaused = false;
   });
 }
@@ -176,15 +207,15 @@ function checkLevelProgress() {
 
 function getLevelConfig(level) {
   if (level < 10) {
-    return { maxSwimmers: 30, startSwimmers: 5 };
+    return { maxSwimmers: 30, startSwimmers: 15 };
   }
 
   if (level < 20) {
-    return { maxSwimmers: 40, startSwimmers: 10 };
+    return { maxSwimmers: 40, startSwimmers: 30 };
   }
 
   if (level < 30) {
-    return { maxSwimmers: 50, startSwimmers: 20 };
+    return { maxSwimmers: 50, startSwimmers: 45 };
   }
 
   return { maxSwimmers: 75, startSwimmers: 50 };
@@ -212,34 +243,41 @@ function speedFromScale(min, max) {
 // =====================================================
 
 function laneFromGlobalSubLane(globalSubLane) {
-  return Math.floor(Math.round(globalSubLane) / SUB_LANES_PER_LANE);
+  return Math.floor(Math.round(globalSubLane) / getSubLanesPerLane());
 }
 
 function subLaneInsideLane(globalSubLane) {
-  return Math.round(globalSubLane) % SUB_LANES_PER_LANE;
+  return Math.round(globalSubLane) % getSubLanesPerLane();
 }
 
 function globalSubLaneFromLaneAndSub(lane, subLane) {
-  return lane * SUB_LANES_PER_LANE + subLane;
+  return lane * getSubLanesPerLane() + subLane;
 }
 
 function xForGlobalSubLane(globalSubLane) {
-  return POOL_X + Math.round(globalSubLane) * SUB_LANE_WIDTH + SUB_LANE_WIDTH / 2 - PLAYER_SIZE / 2;
+  return POOL_X
+    + Math.round(globalSubLane) * getSubLaneWidth()
+    + getSubLaneWidth() / 2
+    - PLAYER_SIZE / 2;
 }
 
 function xForSwimmerGlobalSubLane(globalSubLane) {
-  return POOL_X + Math.round(globalSubLane) * SUB_LANE_WIDTH + SUB_LANE_WIDTH / 2 - SWIMMER_SIZE / 2;
+  return POOL_X
+    + Math.round(globalSubLane) * getSubLaneWidth()
+    + getSubLaneWidth() / 2
+    - SWIMMER_SIZE / 2;
 }
 
 function randomGlobalSubLaneInLane(lane) {
   return globalSubLaneFromLaneAndSub(
     lane,
-    Math.floor(Math.random() * SUB_LANES_PER_LANE)
+    Math.floor(Math.random() * getSubLanesPerLane())
   );
 }
 
 function randomElderlyStartSubLaneInLane(lane) {
-  const sub = Math.floor(Math.random() * (SUB_LANES_PER_LANE - 1));
+  const maxStart = Math.max(0, getSubLanesPerLane() - 2);
+  const sub = Math.floor(Math.random() * (maxStart + 1));
   return globalSubLaneFromLaneAndSub(lane, sub);
 }
 
@@ -252,9 +290,9 @@ function crossesMainLaneBoundary(fromGlobalSubLane, toGlobalSubLane) {
 // =====================================================
 
 let player = {
-  globalSubLane: globalSubLaneFromLaneAndSub(2, 2),
+  globalSubLane: globalSubLaneFromLaneAndSub(2, 1),
 
-  x: xForGlobalSubLane(globalSubLaneFromLaneAndSub(2, 2)),
+  x: xForGlobalSubLane(globalSubLaneFromLaneAndSub(2, 1)),
   y: POOL_Y + POOL_HEIGHT - PLAYER_SIZE,
 
   speedY: 0,
@@ -439,7 +477,7 @@ function chooseAdjacentGlobalSubLane(s) {
     options.push(globalSubLaneFromLaneAndSub(lane, inside - 1));
   }
 
-  if (inside < SUB_LANES_PER_LANE - 1) {
+  if (inside < getSubLanesPerLane() - 1) {
     options.push(globalSubLaneFromLaneAndSub(lane, inside + 1));
   }
 
@@ -477,7 +515,7 @@ function chooseLeastCrowdedSubLaneForSwimmer(s) {
   if (s.typeName === "elderlyGroup") {
     const candidates = [];
 
-    for (let sub = 0; sub < SUB_LANES_PER_LANE - 1; sub++) {
+    for (let sub = 0; sub < getSubLanesPerLane() - 1; sub++) {
       const g1 = globalSubLaneFromLaneAndSub(lane, sub);
       const g2 = globalSubLaneFromLaneAndSub(lane, sub + 1);
 
@@ -497,7 +535,7 @@ function chooseLeastCrowdedSubLaneForSwimmer(s) {
 
   const candidates = [];
 
-  for (let sub = 0; sub < SUB_LANES_PER_LANE; sub++) {
+  for (let sub = 0; sub < getSubLanesPerLane(); sub++) {
     const g = globalSubLaneFromLaneAndSub(lane, sub);
 
     candidates.push({
@@ -614,7 +652,7 @@ function applySwimmerPenalty(s) {
 function movePlayerHorizontal(direction) {
   const newSubLane = player.globalSubLane + direction;
 
-  if (newSubLane < 0 || newSubLane >= TOTAL_SUB_LANES) {
+  if (newSubLane < 0 || newSubLane >= getTotalSubLanes()) {
     return;
   }
 
@@ -1416,13 +1454,13 @@ function updateSwimmerMovement() {
       s.globalSubLane += (s.targetGlobalSubLane - s.globalSubLane) * 0.15;
 
       const minGlobal = globalSubLaneFromLaneAndSub(s.lane, 0);
-      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, SUB_LANES_PER_LANE - 1);
+      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, getSubLanesPerLane() - 1);
 
       s.globalSubLane = clamp(s.globalSubLane, minGlobal, maxGlobal);
       s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
     } else {
       const minGlobal = globalSubLaneFromLaneAndSub(s.lane, 0);
-      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, SUB_LANES_PER_LANE - 2);
+      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, getSubLanesPerLane() - 2);
 
       s.globalSubLane = clamp(s.globalSubLane, minGlobal, maxGlobal);
       s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
@@ -1601,12 +1639,12 @@ function drawPool() {
   ctx.strokeStyle = "rgba(255,255,255,0.28)";
   ctx.lineWidth = 1;
 
-  for (let i = 1; i < TOTAL_SUB_LANES; i++) {
-    if (i % SUB_LANES_PER_LANE === 0) continue;
+  for (let i = 1; i < getTotalSubLanes(); i++) {
+    if (i % getSubLanesPerLane() === 0) continue;
 
     ctx.beginPath();
-    ctx.moveTo(POOL_X + i * SUB_LANE_WIDTH, POOL_Y);
-    ctx.lineTo(POOL_X + i * SUB_LANE_WIDTH, POOL_Y + POOL_HEIGHT);
+    ctx.moveTo(POOL_X + i * getSubLaneWidth(), POOL_Y);
+    ctx.lineTo(POOL_X + i * getSubLaneWidth(), POOL_Y + POOL_HEIGHT);
     ctx.stroke();
   }
 
@@ -1713,7 +1751,7 @@ function drawElderlyGroup(s) {
   ctx.lineWidth = 1;
 
   const leftX = xForSwimmerGlobalSubLane(Math.round(s.globalSubLane)) - 2;
-  ctx.strokeRect(leftX, s.y - 28, SUB_LANE_WIDTH * 2 + 8, 72);
+  ctx.strokeRect(leftX, s.y - 28, getSubLaneWidth() * 2 + 8, 72);
 }
 
 function drawSwimmer(s) {
@@ -1799,7 +1837,7 @@ function drawPlayer() {
 
 function drawHud() {
   ctx.fillStyle = "#222";
-  ctx.fillRect(HUD_X, 40, 180, 430);
+  ctx.fillRect(HUD_X, 40, 180, 445);
 
   ctx.fillStyle = "white";
   ctx.font = "bold 20px monospace";
@@ -1807,44 +1845,44 @@ function drawHud() {
   ctx.fillText("LEVEL " + level, HUD_X + 15, 80);
   ctx.fillText("BANEN " + lanesCompleted, HUD_X + 15, 120);
   ctx.fillText("LVL " + lanesThisLevel + "/" + LANES_PER_LEVEL, HUD_X + 15, 160);
-  ctx.fillText("TIJD " + timeLeft, HUD_X + 15, 200);
-  ctx.fillText("BOTS " + hits + "/" + maxHits, HUD_X + 15, 240);
-  ctx.fillText("DUIK " + player.divesLeft + "/" + MAX_DIVES_PER_LEVEL, HUD_X + 15, 280);
-  ctx.fillText("ZWEM " + swimmers.length, HUD_X + 15, 320);
-  ctx.fillText("START " + getStartSwimmers(), HUD_X + 15, 360);
-  ctx.fillText("MAX " + getMaxSwimmers(), HUD_X + 15, 400);
+  ctx.fillText("SUB " + getSubLanesPerLane(), HUD_X + 15, 200);
+  ctx.fillText("TIJD " + timeLeft, HUD_X + 15, 240);
+  ctx.fillText("BOTS " + hits + "/" + maxHits, HUD_X + 15, 280);
+  ctx.fillText("DUIK " + player.divesLeft + "/" + MAX_DIVES_PER_LEVEL, HUD_X + 15, 320);
+  ctx.fillText("ZWEM " + swimmers.length, HUD_X + 15, 360);
+  ctx.fillText("START " + getStartSwimmers(), HUD_X + 15, 400);
+  ctx.fillText("MAX " + getMaxSwimmers(), HUD_X + 15, 440);
 
   const penaltySeconds = Math.ceil(player.penaltyTimer / 60);
   ctx.fillStyle = player.penaltyTimer > 0 ? "orange" : "white";
-  ctx.fillText("BOETE " + penaltySeconds, HUD_X + 15, 440);
+  ctx.fillText("BOETE " + penaltySeconds, HUD_X + 15, 480);
 }
 
 function drawLegend() {
   ctx.font = "11px monospace";
 
   ctx.fillStyle = "#35C759";
-  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 500);
+  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 525);
 
   ctx.fillStyle = "#1976D2";
-  ctx.fillText("BLAUW langzamer", HUD_X + 5, 520);
+  ctx.fillText("BLAUW langzamer", HUD_X + 5, 545);
 
   ctx.fillStyle = "#00BCD4";
-  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 540);
+  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 565);
 
   ctx.fillStyle = "#111111";
-  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 560);
+  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 585);
 
   ctx.fillStyle = "#B06AD9";
-  ctx.fillText("PAARS bejaarden, 2 vakken", HUD_X + 5, 580);
+  ctx.fillText("PAARS bejaarden, 2 vakken", HUD_X + 5, 605);
 
   ctx.fillStyle = "#ff9800";
-  ctx.fillText("ORANJE = zwemmer-boete", HUD_X + 5, 600);
+  ctx.fillText("ORANJE = zwemmer-boete", HUD_X + 5, 625);
 
   ctx.fillStyle = "white";
-  ctx.fillText("←/→ = deelbaan wisselen", HUD_X + 5, 630);
-  ctx.fillText("SPACE zwemmen = duik", HUD_X + 5, 650);
-  ctx.fillText("Witte lijn alleen met duik", HUD_X + 5, 670);
-  ctx.fillText(">2 botsingen = andere subbaan", HUD_X + 5, 690);
+  ctx.fillText("Level 1-9: 3 subbanen", HUD_X + 5, 655);
+  ctx.fillText("Vanaf level 10: 5 subbanen", HUD_X + 5, 675);
+  ctx.fillText("SPACE zwemmen = duik", HUD_X + 5, 695);
 }
 
 function drawOverlay() {
