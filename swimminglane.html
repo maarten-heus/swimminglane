@@ -43,6 +43,9 @@ const PLAYER_SIZE = 20;
 
 const DECK_MARGIN = 34;
 
+const MAX_DIVES_PER_LEVEL = 3;
+const DIVE_DURATION = 55;
+
 const GATE = {
   x: 660,
   y: 390
@@ -71,6 +74,7 @@ let maxHits = 5;
 let timeLeft = 90;
 let hitCooldown = 0;
 let level = 1;
+let previousLevel = 1;
 
 // =====================================================
 // LEVEL CONFIG
@@ -140,7 +144,11 @@ let player = {
   color: "blue",
 
   penaltyTimer: 0,
-  penaltyDuration: 180
+  penaltyDuration: 180,
+
+  divesLeft: MAX_DIVES_PER_LEVEL,
+  isDiving: false,
+  diveTimer: 0
 };
 
 // =====================================================
@@ -161,6 +169,15 @@ function randomFromArray(arr) {
 
 function laneCenterX(lane) {
   return POOL_X + lane * LANE_WIDTH + 30;
+}
+
+function getPlayerLane() {
+  const centerX = player.x + PLAYER_SIZE / 2;
+  return clamp(
+    Math.floor((centerX - POOL_X) / LANE_WIDTH),
+    0,
+    LANE_COUNT - 1
+  );
 }
 
 function rectsCollide(a, b) {
@@ -217,6 +234,67 @@ function chooseSideWithinLane(swimmer) {
   if (swimmer.lane === LANE_COUNT - 1 && side > 0) side = -1;
 
   return side;
+}
+
+// =====================================================
+// DIVE LOGIC
+// =====================================================
+
+function startDive() {
+  if (!player.swimming) return;
+  if (player.isDiving) return;
+  if (player.divesLeft <= 0) return;
+  if (player.penaltyTimer > 0) return;
+
+  player.isDiving = true;
+  player.diveTimer = DIVE_DURATION;
+  player.divesLeft--;
+}
+
+function updateDive() {
+  if (!player.isDiving) return;
+
+  player.diveTimer--;
+
+  if (player.diveTimer <= 0) {
+    player.isDiving = false;
+  }
+}
+
+function resetDivesForNewLevel() {
+  if (level !== previousLevel) {
+    player.divesLeft = MAX_DIVES_PER_LEVEL;
+    previousLevel = level;
+  }
+}
+
+// =====================================================
+// PENALTY
+// =====================================================
+
+function applyPenalty(pushBack) {
+  if (hitCooldown > 0) return;
+
+  hits++;
+  hitCooldown = 35;
+
+  player.penaltyTimer = player.penaltyDuration;
+
+  if (player.speedY > 0) {
+    player.speedY = player.minSpeed;
+  } else {
+    player.speedY = -player.minSpeed;
+  }
+
+  player.color = "orange";
+
+  if (pushBack) {
+    if (player.speedY < 0) {
+      player.y += 10;
+    } else {
+      player.y -= 10;
+    }
+  }
 }
 
 // =====================================================
@@ -608,6 +686,8 @@ function updatePlayer() {
     return;
   }
 
+  updateDive();
+
   if (player.penaltyTimer > 0) {
     player.penaltyTimer--;
   }
@@ -617,11 +697,11 @@ function updatePlayer() {
   if (player.y < POOL_Y) {
     player.y = POOL_Y;
 
-    const direction = Math.abs(player.speedY) < 0.01 ? 1 : Math.sign(player.speedY);
     player.speedY = Math.abs(player.baseSpeed);
 
     lanesCompleted++;
     level = Math.min(30, Math.floor(lanesCompleted / 5) + 1);
+    resetDivesForNewLevel();
   }
 
   if (player.y > POOL_Y + POOL_HEIGHT - PLAYER_SIZE) {
@@ -631,6 +711,7 @@ function updatePlayer() {
 
     lanesCompleted++;
     level = Math.min(30, Math.floor(lanesCompleted / 5) + 1);
+    resetDivesForNewLevel();
   }
 
   if (player.penaltyTimer > 0) {
@@ -857,6 +938,8 @@ function updatePlayerCollisions() {
 
   if (hitCooldown > 0) hitCooldown--;
 
+  if (player.isDiving) return;
+
   const p = {
     x: player.x,
     y: player.y,
@@ -864,6 +947,31 @@ function updatePlayerCollisions() {
     h: PLAYER_SIZE
   };
 
+  // Botsing met lijnen
+  for (let i = 1; i < LANE_COUNT; i++) {
+    const lineX = POOL_X + i * LANE_WIDTH;
+
+    const touchesLine =
+      player.x < lineX + 3 &&
+      player.x + PLAYER_SIZE > lineX - 3;
+
+    if (touchesLine) {
+      applyPenalty(true);
+
+      const playerCenter = player.x + PLAYER_SIZE / 2;
+
+      if (playerCenter < lineX) {
+        player.x = lineX - PLAYER_SIZE - 4;
+      } else {
+        player.x = lineX + 4;
+      }
+
+      player.x = clamp(player.x, POOL_X, POOL_X + POOL_WIDTH - PLAYER_SIZE);
+      return;
+    }
+  }
+
+  // Botsing met andere zwemmers
   swimmers.forEach(s => {
     if (s.state !== "swimming") return;
 
@@ -875,26 +983,7 @@ function updatePlayerCollisions() {
     };
 
     if (rectsCollide(p, r)) {
-      if (hitCooldown === 0) {
-        hits++;
-        hitCooldown = 35;
-
-        player.penaltyTimer = player.penaltyDuration;
-
-        if (player.speedY > 0) {
-          player.speedY = player.minSpeed;
-        } else {
-          player.speedY = -player.minSpeed;
-        }
-
-        player.color = "orange";
-
-        if (player.speedY < 0) {
-          player.y += 10;
-        } else {
-          player.y -= 10;
-        }
-      }
+      applyPenalty(true);
     }
   });
 }
@@ -1060,6 +1149,32 @@ function drawSwimmer(s) {
 }
 
 function drawPlayer() {
+  if (player.isDiving) {
+    const progress = player.diveTimer / DIVE_DURATION;
+
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = "#003C8F";
+    ctx.fillRect(player.x + 3, player.y + 8, PLAYER_SIZE - 6, 7);
+
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(
+      player.x + PLAYER_SIZE / 2,
+      player.y + PLAYER_SIZE / 2,
+      14 + (1 - progress) * 10,
+      5,
+      0,
+      0,
+      Math.PI * 2
+    );
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+    return;
+  }
+
   ctx.fillStyle = player.color;
   ctx.fillRect(player.x, player.y, PLAYER_SIZE, PLAYER_SIZE);
 
@@ -1084,7 +1199,7 @@ function drawPlayer() {
 
 function drawHud() {
   ctx.fillStyle = "#222";
-  ctx.fillRect(HUD_X, 40, 180, 350);
+  ctx.fillRect(HUD_X, 40, 180, 390);
 
   ctx.fillStyle = "white";
   ctx.font = "bold 20px monospace";
@@ -1093,29 +1208,35 @@ function drawHud() {
   ctx.fillText("BANEN " + lanesCompleted, HUD_X + 15, 120);
   ctx.fillText("TIJD " + timeLeft, HUD_X + 15, 160);
   ctx.fillText("BOTS " + hits + "/" + maxHits, HUD_X + 15, 200);
-  ctx.fillText("ZWEM " + swimmers.length, HUD_X + 15, 240);
-  ctx.fillText("START " + getStartSwimmers(), HUD_X + 15, 280);
-  ctx.fillText("MAX " + getMaxSwimmers(), HUD_X + 15, 320);
+  ctx.fillText("DUIK " + player.divesLeft + "/" + MAX_DIVES_PER_LEVEL, HUD_X + 15, 240);
+  ctx.fillText("ZWEM " + swimmers.length, HUD_X + 15, 280);
+  ctx.fillText("START " + getStartSwimmers(), HUD_X + 15, 320);
+  ctx.fillText("MAX " + getMaxSwimmers(), HUD_X + 15, 360);
 
   const penaltySeconds = Math.ceil(player.penaltyTimer / 60);
   ctx.fillStyle = player.penaltyTimer > 0 ? "orange" : "white";
-  ctx.fillText("BOETE " + penaltySeconds, HUD_X + 15, 360);
+  ctx.fillText("BOETE " + penaltySeconds, HUD_X + 15, 400);
 }
 
 function drawLegend() {
   ctx.font = "11px monospace";
 
   ctx.fillStyle = "#35C759";
-  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 430);
+  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 465);
 
   ctx.fillStyle = "#1976D2";
-  ctx.fillText("BLAUW langzamer", HUD_X + 5, 450);
+  ctx.fillText("BLAUW langzamer", HUD_X + 5, 485);
 
   ctx.fillStyle = "#00BCD4";
-  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 470);
+  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 505);
 
   ctx.fillStyle = "#111111";
-  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 490);
+  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 525);
+
+  ctx.fillStyle = "white";
+  ctx.fillText("SPACE tijdens zwemmen = duik", HUD_X + 5, 555);
+  ctx.fillText("Tijdens duik: geen botsing", HUD_X + 5, 575);
+  ctx.fillText("Lijn raken zonder duik = boete", HUD_X + 5, 595);
 }
 
 function draw() {
@@ -1170,12 +1291,16 @@ document.addEventListener("keydown", e => {
   if (e.key === "ArrowLeft") player.speedX = -3;
   if (e.key === "ArrowRight") player.speedX = 3;
 
-  if (e.code === "Space" && !player.swimming) {
-    player.swimming = true;
-    player.speedY = -player.baseSpeed;
+  if (e.code === "Space") {
+    if (!player.swimming) {
+      player.swimming = true;
+      player.speedY = -player.baseSpeed;
+    } else {
+      startDive();
+    }
   }
 
-  if (player.swimming && player.penaltyTimer === 0) {
+  if (player.swimming && player.penaltyTimer === 0 && !player.isDiving) {
     if (e.key === "ArrowUp") {
       if (player.speedY < 0) {
         player.speedY -= 0.25;
