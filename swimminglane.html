@@ -1,0 +1,1214 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Zwembad Game</title>
+  <style>
+    body {
+      margin: 0;
+      background: #b7e3f7;
+      font-family: Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+      margin: auto;
+      background: #b7e3f7;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="game" width="720" height="780"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// =====================================================
+// SCENE CONFIG
+// =====================================================
+
+const POOL_X = 60;
+const POOL_Y = 90;
+const POOL_WIDTH = 400;
+const POOL_HEIGHT = 600;
+
+const HUD_X = 500;
+
+const LANE_COUNT = 5;
+const LANE_WIDTH = 80;
+
+const SWIMMER_SIZE = 20;
+const PLAYER_SIZE = 20;
+
+const DECK_MARGIN = 34;
+
+const GATE = {
+  x: 660,
+  y: 390
+};
+
+const RIGHT_WALKWAY_X = POOL_X + POOL_WIDTH + DECK_MARGIN;
+const TOP_WALKWAY_Y = POOL_Y - DECK_MARGIN;
+const BOTTOM_WALKWAY_Y = POOL_Y + POOL_HEIGHT + DECK_MARGIN;
+
+const LADDERS = [
+  { name: "links boven", side: "left", x: POOL_X - 18, y: POOL_Y + 60 },
+  { name: "rechts boven", side: "right", x: POOL_X + POOL_WIDTH + 2, y: POOL_Y + 60 },
+  { name: "links midden", side: "left", x: POOL_X - 18, y: POOL_Y + 340 },
+  { name: "rechts midden", side: "right", x: POOL_X + POOL_WIDTH + 2, y: POOL_Y + 340 }
+];
+
+// =====================================================
+// GAME STATE
+// =====================================================
+
+let swimmers = [];
+
+let lanesCompleted = 0;
+let hits = 0;
+let maxHits = 5;
+let timeLeft = 90;
+let hitCooldown = 0;
+let level = 1;
+
+// =====================================================
+// LEVEL CONFIG
+// =====================================================
+
+function getLevelConfig(level) {
+  if (level < 10) {
+    return {
+      maxSwimmers: 30,
+      startSwimmers: 5
+    };
+  }
+
+  if (level < 20) {
+    return {
+      maxSwimmers: 40,
+      startSwimmers: 10
+    };
+  }
+
+  if (level < 30) {
+    return {
+      maxSwimmers: 50,
+      startSwimmers: 20
+    };
+  }
+
+  return {
+    maxSwimmers: 75,
+    startSwimmers: 50
+  };
+}
+
+function getMaxSwimmers() {
+  return getLevelConfig(level).maxSwimmers;
+}
+
+function getStartSwimmers() {
+  return getLevelConfig(level).startSwimmers;
+}
+
+// =====================================================
+// SPEED SCALE
+// =====================================================
+
+function speedFromScale(min, max) {
+  const value = min + Math.random() * (max - min);
+  return value * 0.08;
+}
+
+// =====================================================
+// PLAYER
+// =====================================================
+
+let player = {
+  x: POOL_X + 180,
+  y: POOL_Y + POOL_HEIGHT - PLAYER_SIZE,
+
+  speedX: 0,
+  speedY: 0,
+
+  baseSpeed: 2.0,
+  maxSpeed: 3.0,
+  minSpeed: 0.8,
+
+  swimming: false,
+  color: "blue",
+
+  penaltyTimer: 0,
+  penaltyDuration: 180
+};
+
+// =====================================================
+// HELPERS
+// =====================================================
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function randomDirection() {
+  return Math.random() < 0.5 ? -1 : 1;
+}
+
+function randomFromArray(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function laneCenterX(lane) {
+  return POOL_X + lane * LANE_WIDTH + 30;
+}
+
+function rectsCollide(a, b) {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
+function moveTowards(obj, targetX, targetY, speed) {
+  const dx = targetX - obj.x;
+  const dy = targetY - obj.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  if (dist <= speed) {
+    obj.x = targetX;
+    obj.y = targetY;
+    return true;
+  }
+
+  obj.x += (dx / dist) * speed;
+  obj.y += (dy / dist) * speed;
+
+  return false;
+}
+
+function isAhead(swimmer, other) {
+  if (swimmer.speedY > 0) {
+    return other.y > swimmer.y;
+  } else {
+    return other.y < swimmer.y;
+  }
+}
+
+function forwardDistance(swimmer, other) {
+  return Math.abs(other.y - swimmer.y);
+}
+
+function sameLane(a, b) {
+  return a.lane === b.lane;
+}
+
+function clampOffsetInsideLane(swimmer, offset) {
+  const maxOffset = 24;
+  return clamp(offset, -maxOffset, maxOffset);
+}
+
+function chooseSideWithinLane(swimmer) {
+  let side = randomDirection();
+
+  if (swimmer.lane === 0 && side < 0) side = 1;
+  if (swimmer.lane === LANE_COUNT - 1 && side > 0) side = -1;
+
+  return side;
+}
+
+// =====================================================
+// LANE SELECTION
+// =====================================================
+
+function lanePopulation(lane) {
+  return swimmers.filter(s =>
+    s.lane === lane &&
+    (
+      s.state === "swimming" ||
+      s.state === "walkingIn" ||
+      s.state === "waitingToJump"
+    )
+  ).length;
+}
+
+function laneAverageSpeed(lane) {
+  const laneSwimmers = swimmers.filter(s =>
+    s.lane === lane &&
+    (
+      s.state === "swimming" ||
+      s.state === "walkingIn" ||
+      s.state === "waitingToJump"
+    )
+  );
+
+  if (laneSwimmers.length === 0) return 0;
+
+  const sum = laneSwimmers.reduce((acc, s) => acc + Math.abs(s.normalSpeed), 0);
+  return sum / laneSwimmers.length;
+}
+
+function laneAggression(lane) {
+  return swimmers.filter(s =>
+    s.lane === lane &&
+    s.typeName === "unfriendlyCrawl" &&
+    (
+      s.state === "swimming" ||
+      s.state === "walkingIn" ||
+      s.state === "waitingToJump"
+    )
+  ).length;
+}
+
+function chooseCalmestLane() {
+  const candidates = [];
+
+  for (let lane = 0; lane < LANE_COUNT; lane++) {
+    candidates.push({
+      lane,
+      count: lanePopulation(lane),
+      avgSpeed: laneAverageSpeed(lane),
+      aggression: laneAggression(lane)
+    });
+  }
+
+  candidates.sort((a, b) => {
+    if (a.count !== b.count) return a.count - b.count;
+    if (Math.abs(a.avgSpeed - b.avgSpeed) > 0.001) return a.avgSpeed - b.avgSpeed;
+    if (a.aggression !== b.aggression) return a.aggression - b.aggression;
+    return Math.random() - 0.5;
+  });
+
+  return candidates[0].lane;
+}
+
+// =====================================================
+// PATHS AROUND POOL
+// =====================================================
+
+function buildEntryPath(entryX, entryY) {
+  const path = [];
+
+  path.push({ x: RIGHT_WALKWAY_X, y: GATE.y });
+  path.push({ x: RIGHT_WALKWAY_X, y: entryY });
+  path.push({ x: entryX, y: entryY });
+
+  return path;
+}
+
+function buildExitPath(fromX, fromY) {
+  const path = [];
+
+  path.push({ x: RIGHT_WALKWAY_X, y: fromY });
+  path.push({ x: RIGHT_WALKWAY_X, y: GATE.y });
+  path.push({ x: GATE.x, y: GATE.y });
+
+  return path;
+}
+
+function updatePathFollower(s) {
+  if (!s.path || s.path.length === 0) return true;
+
+  const target = s.path[0];
+  const arrived = moveTowards(s, target.x, target.y, s.walkSpeed);
+
+  if (arrived) {
+    s.path.shift();
+  }
+
+  return s.path.length === 0;
+}
+
+// =====================================================
+// SWIMMER TYPES
+// =====================================================
+
+const SWIMMER_TYPES = {
+
+  ordinary: {
+    label: "Gewone zwemmer",
+    color: "#35C759",
+    stripe: "white",
+    speedMin: 10,
+    speedMax: 25,
+    lanesMin: 20,
+    lanesMax: 30,
+
+    behavior: function(s, others) {
+      others.forEach(o => {
+        if (o === s) return;
+        if (o.state !== "swimming") return;
+        if (!sameLane(s, o)) return;
+        if (!isAhead(s, o)) return;
+
+        const distance = forwardDistance(s, o);
+
+        if (distance < 95 && distance > 12 && !s.avoiding) {
+          s.avoiding = true;
+          s.avoidTimer = 85;
+          s.targetOffset = clampOffsetInsideLane(s, chooseSideWithinLane(s) * 26);
+          s.returnToLane = true;
+        }
+      });
+    }
+  },
+
+  slower: {
+    label: "Iets langzamere zwemmer",
+    color: "#1976D2",
+    stripe: "white",
+    speedMin: 5,
+    speedMax: 15,
+    lanesMin: 20,
+    lanesMax: 30,
+
+    behavior: function(s, others) {
+      others.forEach(o => {
+        if (o === s) return;
+        if (o.state !== "swimming") return;
+        if (!sameLane(s, o)) return;
+        if (!isAhead(s, o)) return;
+
+        const distance = forwardDistance(s, o);
+
+        if (distance < 55 && distance > 10 && !s.avoiding && !s.stopped) {
+          s.stopped = true;
+          s.stopTimer = 25;
+
+          s.avoiding = true;
+          s.avoidTimer = 120;
+
+          s.targetOffset = clampOffsetInsideLane(s, chooseSideWithinLane(s) * 28);
+          s.returnToLane = true;
+        }
+      });
+    }
+  },
+
+  friendlyCrawl: {
+    label: "Vriendelijke borstcrawl",
+    color: "#00BCD4",
+    stripe: "black",
+    speedMin: 15,
+    speedMax: 25,
+    lanesMin: 30,
+    lanesMax: 40,
+
+    behavior: function(s, others) {
+      others.forEach(o => {
+        if (o === s) return;
+        if (o.state !== "swimming") return;
+        if (!sameLane(s, o)) return;
+        if (!isAhead(s, o)) return;
+
+        const distance = forwardDistance(s, o);
+
+        if (distance < 110 && distance > 15 && !s.avoiding) {
+          s.avoiding = true;
+          s.avoidTimer = 125;
+
+          s.targetOffset = clampOffsetInsideLane(s, chooseSideWithinLane(s) * 30);
+
+          s.returnToLane = Math.random() < 0.5;
+        }
+      });
+    }
+  },
+
+  unfriendlyCrawl: {
+    label: "Niet-vriendelijke borstcrawl",
+    color: "#111111",
+    stripe: "white",
+    speedMin: 25,
+    speedMax: 30,
+    lanesMin: 40,
+    lanesMax: 50,
+
+    behavior: function(s, others) {
+      // Deze zwemmer anticipeert niet en wijkt niet uit.
+    }
+  }
+};
+
+// =====================================================
+// TYPE AVAILABILITY BY LEVEL
+// =====================================================
+
+function getAvailableSwimmerTypes() {
+  if (level < 4) {
+    return ["ordinary"];
+  }
+
+  if (level < 8) {
+    return ["ordinary", "slower"];
+  }
+
+  if (level < 15) {
+    return ["ordinary", "slower", "friendlyCrawl"];
+  }
+
+  return ["ordinary", "slower", "friendlyCrawl", "unfriendlyCrawl"];
+}
+
+// =====================================================
+// CREATE SWIMMER
+// =====================================================
+
+function createSwimmer(randomPosition) {
+  const typeNames = getAvailableSwimmerTypes();
+  const typeName = randomFromArray(typeNames);
+  const type = SWIMMER_TYPES[typeName];
+
+  const lane = randomPosition
+    ? Math.floor(Math.random() * LANE_COUNT)
+    : chooseCalmestLane();
+
+  const baseX = laneCenterX(lane);
+
+  const fromTop = Math.random() < 0.5;
+  const direction = fromTop ? 1 : -1;
+
+  const speed = speedFromScale(type.speedMin, type.speedMax);
+
+  const targetLanes =
+    type.lanesMin + Math.floor(Math.random() * (type.lanesMax - type.lanesMin + 1));
+
+  let x;
+  let y;
+  let state;
+  let path = [];
+
+  const entryDeckY = fromTop ? TOP_WALKWAY_Y : BOTTOM_WALKWAY_Y;
+  const jumpX = baseX;
+  const jumpY = entryDeckY;
+
+  if (randomPosition) {
+    x = baseX;
+    y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
+    state = "swimming";
+  } else {
+    x = GATE.x;
+    y = GATE.y;
+    state = "walkingIn";
+    path = buildEntryPath(jumpX, jumpY);
+  }
+
+  return {
+    typeName,
+    type,
+
+    state,
+
+    lane,
+    baseX,
+    x,
+    y,
+
+    jumpX,
+    jumpY,
+    fromTop,
+
+    path,
+
+    speedY: speed * direction,
+    normalSpeed: speed,
+    walkSpeed: 1.5,
+
+    currentOffset: 0,
+    targetOffset: 0,
+
+    avoiding: false,
+    avoidTimer: 0,
+    returnToLane: true,
+
+    stopped: false,
+    stopTimer: 0,
+
+    lanesSwum: 0,
+    targetLanes,
+
+    markedForExit: false,
+    exitLadder: null,
+    removeMe: false
+  };
+}
+
+// =====================================================
+// INITIAL POPULATION
+// =====================================================
+
+function populateInitialSwimmers() {
+  swimmers = [];
+
+  const count = getStartSwimmers();
+
+  for (let i = 0; i < count; i++) {
+    swimmers.push(createSwimmer(true));
+  }
+}
+
+populateInitialSwimmers();
+
+// =====================================================
+// POPULATION SYSTEM
+// =====================================================
+
+function spawnPopulationEvent() {
+  const max = getMaxSwimmers();
+
+  const activeCount = swimmers.filter(s =>
+    s.state !== "walkingOut"
+  ).length;
+
+  let shouldSpawn;
+
+  if (activeCount < max) {
+    shouldSpawn = Math.random() < 0.65;
+  } else {
+    shouldSpawn = false;
+  }
+
+  if (shouldSpawn) {
+    swimmers.push(createSwimmer(false));
+  } else {
+    const candidates = swimmers.filter(
+      s => s.state === "swimming" && !s.markedForExit
+    );
+
+    if (candidates.length > Math.max(5, getStartSwimmers())) {
+      const chosen = randomFromArray(candidates);
+      chosen.markedForExit = true;
+    }
+  }
+}
+
+function scheduleNextPopulationEvent() {
+  const delay = 5000 + Math.random() * 5000;
+
+  setTimeout(() => {
+    spawnPopulationEvent();
+    scheduleNextPopulationEvent();
+  }, delay);
+}
+
+scheduleNextPopulationEvent();
+
+// =====================================================
+// PLAYER UPDATE
+// =====================================================
+
+function updatePlayer() {
+  player.x += player.speedX;
+  player.x = clamp(player.x, POOL_X, POOL_X + POOL_WIDTH - PLAYER_SIZE);
+
+  if (!player.swimming) {
+    player.y = POOL_Y + POOL_HEIGHT - PLAYER_SIZE;
+    return;
+  }
+
+  if (player.penaltyTimer > 0) {
+    player.penaltyTimer--;
+  }
+
+  player.y += player.speedY;
+
+  if (player.y < POOL_Y) {
+    player.y = POOL_Y;
+
+    const direction = Math.abs(player.speedY) < 0.01 ? 1 : Math.sign(player.speedY);
+    player.speedY = Math.abs(player.baseSpeed);
+
+    lanesCompleted++;
+    level = Math.min(30, Math.floor(lanesCompleted / 5) + 1);
+  }
+
+  if (player.y > POOL_Y + POOL_HEIGHT - PLAYER_SIZE) {
+    player.y = POOL_Y + POOL_HEIGHT - PLAYER_SIZE;
+
+    player.speedY = -Math.abs(player.baseSpeed);
+
+    lanesCompleted++;
+    level = Math.min(30, Math.floor(lanesCompleted / 5) + 1);
+  }
+
+  if (player.penaltyTimer > 0) {
+    player.color = "orange";
+  } else if (player.color === "orange") {
+    player.color = "blue";
+  }
+}
+
+// =====================================================
+// ENTRY / EXIT LOGIC
+// =====================================================
+
+function updateWalkingIn(s) {
+  const arrived = updatePathFollower(s);
+
+  if (arrived) {
+    s.state = "waitingToJump";
+    s.jumpTimer = 18;
+  }
+}
+
+function updateWaitingToJump(s) {
+  s.jumpTimer--;
+
+  if (s.jumpTimer <= 0) {
+    s.state = "swimming";
+    s.x = s.baseX;
+
+    if (s.fromTop) {
+      s.y = POOL_Y;
+      s.speedY = Math.abs(s.normalSpeed);
+    } else {
+      s.y = POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
+      s.speedY = -Math.abs(s.normalSpeed);
+    }
+  }
+}
+
+function nearestLadder(s) {
+  let best = LADDERS[0];
+  let bestDistance = Infinity;
+
+  LADDERS.forEach(l => {
+    const dx = l.x - s.x;
+    const dy = l.y - s.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+
+    if (d < bestDistance) {
+      best = l;
+      bestDistance = d;
+    }
+  });
+
+  return best;
+}
+
+function startExit(s) {
+  s.exitLadder = nearestLadder(s);
+  s.state = "goingToLadder";
+  s.targetOffset = 0;
+  s.currentOffset = 0;
+}
+
+function updateGoingToLadder(s) {
+  const ladderWaterX =
+    s.exitLadder.side === "left"
+      ? POOL_X
+      : POOL_X + POOL_WIDTH - SWIMMER_SIZE;
+
+  const ladderWaterY = s.exitLadder.y;
+
+  const arrived = moveTowards(s, ladderWaterX, ladderWaterY, 1.2);
+
+  if (arrived) {
+    s.state = "climbingOut";
+    s.climbTimer = 24;
+  }
+}
+
+function updateClimbingOut(s) {
+  s.climbTimer--;
+
+  if (s.climbTimer <= 0) {
+    if (s.exitLadder.side === "left") {
+      s.x = POOL_X - DECK_MARGIN;
+    } else {
+      s.x = POOL_X + POOL_WIDTH + DECK_MARGIN;
+    }
+
+    s.y = s.exitLadder.y;
+    s.path = buildExitPath(s.x, s.y);
+    s.state = "walkingOut";
+  }
+}
+
+function updateWalkingOut(s) {
+  const arrived = updatePathFollower(s);
+
+  if (arrived) {
+    s.removeMe = true;
+  }
+}
+
+// =====================================================
+// SWIMMER UPDATE
+// =====================================================
+
+function updateSwimmerBehavior() {
+  swimmers.forEach(s => {
+    if (s.state !== "swimming") return;
+
+    s.type.behavior(s, swimmers);
+
+    if (s.avoiding) {
+      s.avoidTimer--;
+
+      if (s.avoidTimer <= 0) {
+        s.avoiding = false;
+
+        if (s.returnToLane) {
+          s.targetOffset = 0;
+        } else {
+          s.targetOffset *= 0.45;
+        }
+      }
+    }
+
+    if (!s.avoiding && s.returnToLane) {
+      s.targetOffset = 0;
+    }
+  });
+}
+
+function updateSwimmerMovement() {
+  swimmers.forEach(s => {
+
+    if (s.state === "walkingIn") {
+      updateWalkingIn(s);
+      return;
+    }
+
+    if (s.state === "waitingToJump") {
+      updateWaitingToJump(s);
+      return;
+    }
+
+    if (s.state === "goingToLadder") {
+      updateGoingToLadder(s);
+      return;
+    }
+
+    if (s.state === "climbingOut") {
+      updateClimbingOut(s);
+      return;
+    }
+
+    if (s.state === "walkingOut") {
+      updateWalkingOut(s);
+      return;
+    }
+
+    if (s.state !== "swimming") return;
+
+    if (s.stopped) {
+      s.stopTimer--;
+
+      if (s.stopTimer <= 0) {
+        s.stopped = false;
+      }
+    } else {
+      s.y += s.speedY;
+    }
+
+    if (s.y < POOL_Y) {
+      s.y = POOL_Y;
+
+      if (s.markedForExit || s.lanesSwum >= s.targetLanes) {
+        startExit(s);
+        return;
+      }
+
+      s.speedY = Math.abs(s.normalSpeed);
+      s.lanesSwum++;
+    }
+
+    if (s.y > POOL_Y + POOL_HEIGHT - SWIMMER_SIZE) {
+      s.y = POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
+
+      if (s.markedForExit || s.lanesSwum >= s.targetLanes) {
+        startExit(s);
+        return;
+      }
+
+      s.speedY = -Math.abs(s.normalSpeed);
+      s.lanesSwum++;
+    }
+
+    s.targetOffset = clampOffsetInsideLane(s, s.targetOffset);
+    s.currentOffset += (s.targetOffset - s.currentOffset) * 0.12;
+
+    s.x = s.baseX + s.currentOffset;
+
+    const laneLeft = POOL_X + s.lane * LANE_WIDTH;
+    const laneRight = laneLeft + LANE_WIDTH - SWIMMER_SIZE;
+
+    s.x = clamp(s.x, laneLeft + 4, laneRight - 4);
+  });
+
+  swimmers = swimmers.filter(s => !s.removeMe);
+}
+
+function updateSwimmers() {
+  updateSwimmerBehavior();
+  updateSwimmerMovement();
+}
+
+// =====================================================
+// PLAYER COLLISIONS
+// =====================================================
+
+function updatePlayerCollisions() {
+  if (!player.swimming) return;
+
+  if (hitCooldown > 0) hitCooldown--;
+
+  const p = {
+    x: player.x,
+    y: player.y,
+    w: PLAYER_SIZE,
+    h: PLAYER_SIZE
+  };
+
+  swimmers.forEach(s => {
+    if (s.state !== "swimming") return;
+
+    const r = {
+      x: s.x,
+      y: s.y,
+      w: SWIMMER_SIZE,
+      h: SWIMMER_SIZE
+    };
+
+    if (rectsCollide(p, r)) {
+      if (hitCooldown === 0) {
+        hits++;
+        hitCooldown = 35;
+
+        player.penaltyTimer = player.penaltyDuration;
+
+        if (player.speedY > 0) {
+          player.speedY = player.minSpeed;
+        } else {
+          player.speedY = -player.minSpeed;
+        }
+
+        player.color = "orange";
+
+        if (player.speedY < 0) {
+          player.y += 10;
+        } else {
+          player.y -= 10;
+        }
+      }
+    }
+  });
+}
+
+// =====================================================
+// MAIN UPDATE
+// =====================================================
+
+function update() {
+  updatePlayer();
+  updateSwimmers();
+  updatePlayerCollisions();
+}
+
+// =====================================================
+// DRAWING
+// =====================================================
+
+function drawDeck() {
+  ctx.fillStyle = "#e8d4a2";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = "#d2bd86";
+  ctx.lineWidth = 1;
+
+  for (let y = 0; y < canvas.height; y += 28) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#8D6E63";
+  ctx.fillRect(GATE.x - 30, GATE.y - 35, 60, 70);
+
+  ctx.fillStyle = "white";
+  ctx.font = "12px monospace";
+  ctx.fillText("KASSA", GATE.x - 20, GATE.y + 4);
+
+  ctx.strokeStyle = "rgba(120,90,50,0.35)";
+  ctx.lineWidth = 3;
+
+  ctx.beginPath();
+  ctx.moveTo(RIGHT_WALKWAY_X, TOP_WALKWAY_Y);
+  ctx.lineTo(RIGHT_WALKWAY_X, BOTTOM_WALKWAY_Y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(POOL_X, TOP_WALKWAY_Y);
+  ctx.lineTo(RIGHT_WALKWAY_X, TOP_WALKWAY_Y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(POOL_X, BOTTOM_WALKWAY_Y);
+  ctx.lineTo(RIGHT_WALKWAY_X, BOTTOM_WALKWAY_Y);
+  ctx.stroke();
+}
+
+function drawPool() {
+  ctx.fillStyle = "#f7f7f7";
+  ctx.fillRect(
+    POOL_X - 24,
+    POOL_Y - 24,
+    POOL_WIDTH + 48,
+    POOL_HEIGHT + 48
+  );
+
+  ctx.strokeStyle = "#888";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(
+    POOL_X - 24,
+    POOL_Y - 24,
+    POOL_WIDTH + 48,
+    POOL_HEIGHT + 48
+  );
+
+  ctx.fillStyle = "#4FC3F7";
+  ctx.fillRect(POOL_X, POOL_Y, POOL_WIDTH, POOL_HEIGHT);
+
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 4;
+
+  for (let i = 1; i < LANE_COUNT; i++) {
+    ctx.beginPath();
+    ctx.moveTo(POOL_X + i * LANE_WIDTH, POOL_Y);
+    ctx.lineTo(POOL_X + i * LANE_WIDTH, POOL_Y + POOL_HEIGHT);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#0277BD";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(POOL_X, POOL_Y, POOL_WIDTH, POOL_HEIGHT);
+}
+
+function drawLadders() {
+  LADDERS.forEach(l => {
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.moveTo(l.x, l.y);
+    ctx.lineTo(l.x + 18, l.y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(l.x, l.y + 10);
+    ctx.lineTo(l.x + 18, l.y + 10);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(l.x + 3, l.y - 6);
+    ctx.lineTo(l.x + 3, l.y + 18);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(l.x + 15, l.y - 6);
+    ctx.lineTo(l.x + 15, l.y + 18);
+    ctx.stroke();
+  });
+}
+
+function drawSwimmer(s) {
+  if (
+    s.state === "walkingIn" ||
+    s.state === "walkingOut" ||
+    s.state === "goingToLadder" ||
+    s.state === "climbingOut" ||
+    s.state === "waitingToJump"
+  ) {
+    ctx.fillStyle = s.type.color;
+    ctx.fillRect(s.x, s.y, SWIMMER_SIZE, SWIMMER_SIZE);
+
+    ctx.fillStyle = "black";
+    ctx.fillRect(s.x + 6, s.y - 4, 8, 4);
+
+    if (s.state === "waitingToJump") {
+      ctx.strokeStyle = "white";
+      ctx.strokeRect(s.x - 2, s.y - 2, SWIMMER_SIZE + 4, SWIMMER_SIZE + 4);
+    }
+
+    return;
+  }
+
+  ctx.fillStyle = s.type.color;
+  ctx.fillRect(s.x, s.y, SWIMMER_SIZE, SWIMMER_SIZE);
+
+  ctx.fillStyle = "black";
+
+  if (s.speedY < 0) {
+    ctx.fillRect(s.x + 6, s.y - 4, 8, 4);
+  } else {
+    ctx.fillRect(s.x + 6, s.y + SWIMMER_SIZE, 8, 4);
+  }
+
+  ctx.fillStyle = s.type.stripe;
+  ctx.fillRect(s.x + 3, s.y + 8, 14, 3);
+
+  if (s.markedForExit) {
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(s.x - 1, s.y - 1, SWIMMER_SIZE + 2, SWIMMER_SIZE + 2);
+  }
+}
+
+function drawPlayer() {
+  ctx.fillStyle = player.color;
+  ctx.fillRect(player.x, player.y, PLAYER_SIZE, PLAYER_SIZE);
+
+  ctx.fillStyle = "white";
+
+  if (player.swimming) {
+    if (player.speedY < 0) {
+      ctx.fillRect(player.x + 6, player.y - 4, 8, 4);
+    } else {
+      ctx.fillRect(player.x + 6, player.y + PLAYER_SIZE, 8, 4);
+    }
+  } else {
+    ctx.fillStyle = "black";
+    ctx.font = "14px monospace";
+    ctx.fillText(
+      "SPACE = SPRING IN HET WATER",
+      POOL_X + 80,
+      POOL_Y + POOL_HEIGHT + 45
+    );
+  }
+}
+
+function drawHud() {
+  ctx.fillStyle = "#222";
+  ctx.fillRect(HUD_X, 40, 180, 350);
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 20px monospace";
+
+  ctx.fillText("LEVEL " + level, HUD_X + 15, 80);
+  ctx.fillText("BANEN " + lanesCompleted, HUD_X + 15, 120);
+  ctx.fillText("TIJD " + timeLeft, HUD_X + 15, 160);
+  ctx.fillText("BOTS " + hits + "/" + maxHits, HUD_X + 15, 200);
+  ctx.fillText("ZWEM " + swimmers.length, HUD_X + 15, 240);
+  ctx.fillText("START " + getStartSwimmers(), HUD_X + 15, 280);
+  ctx.fillText("MAX " + getMaxSwimmers(), HUD_X + 15, 320);
+
+  const penaltySeconds = Math.ceil(player.penaltyTimer / 60);
+  ctx.fillStyle = player.penaltyTimer > 0 ? "orange" : "white";
+  ctx.fillText("BOETE " + penaltySeconds, HUD_X + 15, 360);
+}
+
+function drawLegend() {
+  ctx.font = "11px monospace";
+
+  ctx.fillStyle = "#35C759";
+  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 430);
+
+  ctx.fillStyle = "#1976D2";
+  ctx.fillText("BLAUW langzamer", HUD_X + 5, 450);
+
+  ctx.fillStyle = "#00BCD4";
+  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 470);
+
+  ctx.fillStyle = "#111111";
+  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 490);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawDeck();
+  drawPool();
+  drawLadders();
+
+  swimmers.forEach(drawSwimmer);
+
+  drawPlayer();
+
+  drawHud();
+  drawLegend();
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+
+function loop() {
+  update();
+  draw();
+
+  if (timeLeft > 0 && hits < maxHits) {
+    requestAnimationFrame(loop);
+  } else {
+    if (hits >= maxHits) {
+      alert("Badmeester: eruit! Te veel botsingen. Banen: " + lanesCompleted);
+    } else {
+      alert("Zwembad dicht! Banen: " + lanesCompleted);
+    }
+  }
+}
+
+// =====================================================
+// TIMER
+// =====================================================
+
+setInterval(() => {
+  if (timeLeft > 0 && hits < maxHits) {
+    timeLeft--;
+  }
+}, 1000);
+
+// =====================================================
+// CONTROLS
+// =====================================================
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") player.speedX = -3;
+  if (e.key === "ArrowRight") player.speedX = 3;
+
+  if (e.code === "Space" && !player.swimming) {
+    player.swimming = true;
+    player.speedY = -player.baseSpeed;
+  }
+
+  if (player.swimming && player.penaltyTimer === 0) {
+    if (e.key === "ArrowUp") {
+      if (player.speedY < 0) {
+        player.speedY -= 0.25;
+      } else {
+        player.speedY += 0.25;
+      }
+    }
+
+    if (e.key === "ArrowDown") {
+      if (player.speedY < 0) {
+        player.speedY += 0.25;
+      } else {
+        player.speedY -= 0.25;
+      }
+    }
+
+    if (Math.abs(player.speedY) < player.minSpeed) {
+      player.speedY = player.speedY < 0 ? -player.minSpeed : player.minSpeed;
+    }
+
+    player.speedY = clamp(player.speedY, -player.maxSpeed, player.maxSpeed);
+  }
+});
+
+document.addEventListener("keyup", e => {
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    player.speedX = 0;
+  }
+});
+
+// START
+loop();
+</script>
+
+</body>
+</html>
