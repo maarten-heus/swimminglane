@@ -18,7 +18,7 @@
 </head>
 <body>
 
-<canvas id="game" width="720" height="780"></canvas>
+<canvas id="game" width="720" height="1000"></canvas>
 
 <script>
 const canvas = document.getElementById("game");
@@ -63,10 +63,13 @@ const TOP_WALKWAY_Y = POOL_Y - DECK_MARGIN;
 const BOTTOM_WALKWAY_Y = POOL_Y + POOL_HEIGHT + DECK_MARGIN;
 
 const LADDERS = [
-  { name: "links boven", side: "left", x: POOL_X - 18, y: POOL_Y + 60 },
-  { name: "rechts boven", side: "right", x: POOL_X + POOL_WIDTH + 2, y: POOL_Y + 60 },
-  { name: "links midden", side: "left", x: POOL_X - 18, y: POOL_Y + 340 },
-  { name: "rechts midden", side: "right", x: POOL_X + POOL_WIDTH + 2, y: POOL_Y + 340 }
+  // BOVEN (korte zijde)
+  { name: "boven links", side: "top", x: POOL_X + 20, y: POOL_Y - 8 },
+  { name: "boven rechts", side: "top", x: POOL_X + POOL_WIDTH - 20, y: POOL_Y - 8 },
+
+  // ONDER (korte zijde)
+  { name: "onder links", side: "bottom", x: POOL_X + 20, y: POOL_Y + POOL_HEIGHT + 8 },
+  { name: "onder rechts", side: "bottom", x: POOL_X + POOL_WIDTH - 20, y: POOL_Y + POOL_HEIGHT + 8 }
 ];
 
 // =====================================================
@@ -1665,28 +1668,21 @@ function drawPool() {
 
 function drawLadders() {
   LADDERS.forEach(l => {
+
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 3;
 
+    // horizontale richting (boven/onder)
     ctx.beginPath();
-    ctx.moveTo(l.x, l.y);
-    ctx.lineTo(l.x + 18, l.y);
+    ctx.moveTo(l.x - 10, l.y);
+    ctx.lineTo(l.x + 10, l.y);
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.moveTo(l.x, l.y + 10);
-    ctx.lineTo(l.x + 18, l.y + 10);
+    ctx.moveTo(l.x - 10, l.y + 6);
+    ctx.lineTo(l.x + 10, l.y + 6);
     ctx.stroke();
 
-    ctx.beginPath();
-    ctx.moveTo(l.x + 3, l.y - 6);
-    ctx.lineTo(l.x + 3, l.y + 18);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(l.x + 15, l.y - 6);
-    ctx.lineTo(l.x + 15, l.y + 18);
-    ctx.stroke();
   });
 }
 
@@ -1836,27 +1832,107 @@ function drawPlayer() {
 }
 
 function drawHud() {
+  const totalWidth = POOL_WIDTH;
+  const gap = 10;
+
+  const blockWidth = (totalWidth - 2 * gap) / 3;
+  const blockHeight = 160;
+
+  const baseX = POOL_X;
+  const y = POOL_Y + POOL_HEIGHT + 60;
+
+  const padding = 12;
+  const lineHeight = 30;
+
+  // =========================
+  // BLOK 1: ZWEMBAD
+  // =========================
+  let x = baseX;
+
   ctx.fillStyle = "#222";
-  ctx.fillRect(HUD_X, 40, 180, 445);
+  ctx.fillRect(x, y, blockWidth, blockHeight);
 
   ctx.fillStyle = "white";
-  ctx.font = "bold 20px monospace";
 
-  ctx.fillText("LEVEL " + level, HUD_X + 15, 80);
-  ctx.fillText("BANEN " + lanesCompleted, HUD_X + 15, 120);
-  ctx.fillText("LVL " + lanesThisLevel + "/" + LANES_PER_LEVEL, HUD_X + 15, 160);
-  ctx.fillText("SUB " + getSubLanesPerLane(), HUD_X + 15, 200);
-  ctx.fillText("TIJD " + timeLeft, HUD_X + 15, 240);
-  ctx.fillText("BOTS " + hits + "/" + maxHits, HUD_X + 15, 280);
-  ctx.fillText("DUIK " + player.divesLeft + "/" + MAX_DIVES_PER_LEVEL, HUD_X + 15, 320);
-  ctx.fillText("ZWEM " + swimmers.length, HUD_X + 15, 360);
-  ctx.fillText("START " + getStartSwimmers(), HUD_X + 15, 400);
-  ctx.fillText("MAX " + getMaxSwimmers(), HUD_X + 15, 440);
+  ctx.font = "bold 14px monospace";
+  ctx.fillText("ZWEMBAD", x + padding, y + padding + 8);
+
+  ctx.font = "16px monospace";
+
+  ctx.fillText(
+    "ZWEMMERS: " + swimmers.length,
+    x + padding,
+    y + padding + 35
+  );
+
+  // =========================
+  // BLOK 2: LEVEL INFO
+  // =========================
+  x = baseX + blockWidth + gap;
+
+  ctx.fillStyle = "#222";
+  ctx.fillRect(x, y, blockWidth, blockHeight);
+
+  ctx.fillStyle = "white";
+
+  ctx.font = "bold 14px monospace";
+  ctx.fillText("LEVEL", x + padding, y + padding + 8);
+
+  ctx.font = "16px monospace";
+
+  let textY = y + padding + 30;
+
+  ctx.fillText("LEVEL: " + level, x + padding, textY);
+
+  ctx.fillText("TIJD: " + timeLeft, x + padding, textY + lineHeight);
+
+  // ✅ slash notatie
+  ctx.fillText(
+    "BANEN: " + lanesThisLevel + "/" + LANES_PER_LEVEL,
+    x + padding,
+    textY + 2 * lineHeight
+  );
+
+  // =========================
+  // BLOK 3: SPELER
+  // =========================
+  x = baseX + 2 * (blockWidth + gap);
+
+  ctx.fillStyle = "#222";
+  ctx.fillRect(x, y, blockWidth, blockHeight);
+
+  ctx.fillStyle = "white";
+
+  ctx.font = "bold 14px monospace";
+  ctx.fillText("SPELER", x + padding, y + padding + 8);
+
+  ctx.font = "16px monospace";
+
+  textY = y + padding + 30;
+
+  ctx.fillText(
+    "BOTSINGEN: " + hits,
+    x + padding,
+    textY
+  );
+
+  ctx.fillText(
+    "DUIKEN: " + player.divesLeft,
+    x + padding,
+    textY + lineHeight
+  );
 
   const penaltySeconds = Math.ceil(player.penaltyTimer / 60);
+
   ctx.fillStyle = player.penaltyTimer > 0 ? "orange" : "white";
-  ctx.fillText("BOETE " + penaltySeconds, HUD_X + 15, 480);
+
+  ctx.fillText(
+    "STRAF: " + penaltySeconds,
+    x + padding,
+    textY + 2 * lineHeight
+  );
 }
+
 
 function drawLegend() {
   ctx.font = "11px monospace";
