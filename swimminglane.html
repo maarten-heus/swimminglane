@@ -38,8 +38,14 @@ const HUD_X = 500;
 const LANE_COUNT = 5;
 const LANE_WIDTH = 80;
 
-const SWIMMER_SIZE = 20;
-const PLAYER_SIZE = 20;
+const SUB_LANES_PER_LANE = 5;
+const SUB_LANE_WIDTH = LANE_WIDTH / SUB_LANES_PER_LANE;
+const TOTAL_SUB_LANES = LANE_COUNT * SUB_LANES_PER_LANE;
+
+// Belangrijk: kleiner dan subbaanbreedte.
+// Daardoor ziet naast elkaar zwemmen er ook logisch uit.
+const SWIMMER_SIZE = 14;
+const PLAYER_SIZE = 14;
 
 const DECK_MARGIN = 34;
 
@@ -126,14 +132,62 @@ function speedFromScale(min, max) {
 }
 
 // =====================================================
+// GRID HELPERS
+// =====================================================
+
+function laneFromGlobalSubLane(globalSubLane) {
+  return Math.floor(globalSubLane / SUB_LANES_PER_LANE);
+}
+
+function subLaneInsideLane(globalSubLane) {
+  return globalSubLane % SUB_LANES_PER_LANE;
+}
+
+function globalSubLaneFromLaneAndSub(lane, subLane) {
+  return lane * SUB_LANES_PER_LANE + subLane;
+}
+
+function xForGlobalSubLane(globalSubLane) {
+  return POOL_X + globalSubLane * SUB_LANE_WIDTH + SUB_LANE_WIDTH / 2 - PLAYER_SIZE / 2;
+}
+
+function xForSwimmerGlobalSubLane(globalSubLane) {
+  return POOL_X + globalSubLane * SUB_LANE_WIDTH + SUB_LANE_WIDTH / 2 - SWIMMER_SIZE / 2;
+}
+
+function laneCenterX(lane) {
+  const middleSub = globalSubLaneFromLaneAndSub(lane, 2);
+  return xForSwimmerGlobalSubLane(middleSub);
+}
+
+function randomGlobalSubLaneInLane(lane) {
+  return globalSubLaneFromLaneAndSub(
+    lane,
+    Math.floor(Math.random() * SUB_LANES_PER_LANE)
+  );
+}
+
+function randomElderlyStartSubLaneInLane(lane) {
+  const sub = Math.floor(Math.random() * (SUB_LANES_PER_LANE - 1));
+  return globalSubLaneFromLaneAndSub(lane, sub);
+}
+
+function crossesMainLaneBoundary(fromGlobalSubLane, toGlobalSubLane) {
+  const fromLane = laneFromGlobalSubLane(fromGlobalSubLane);
+  const toLane = laneFromGlobalSubLane(toGlobalSubLane);
+  return fromLane !== toLane;
+}
+
+// =====================================================
 // PLAYER
 // =====================================================
 
 let player = {
-  x: POOL_X + 180,
+  globalSubLane: globalSubLaneFromLaneAndSub(2, 2),
+
+  x: xForGlobalSubLane(globalSubLaneFromLaneAndSub(2, 2)),
   y: POOL_Y + POOL_HEIGHT - PLAYER_SIZE,
 
-  speedX: 0,
   speedY: 0,
 
   baseSpeed: 2.0,
@@ -152,41 +206,15 @@ let player = {
 };
 
 // =====================================================
-// HELPERS
+// BASIC HELPERS
 // =====================================================
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function randomDirection() {
-  return Math.random() < 0.5 ? -1 : 1;
-}
-
 function randomFromArray(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function laneCenterX(lane) {
-  return POOL_X + lane * LANE_WIDTH + 30;
-}
-
-function getPlayerLane() {
-  const centerX = player.x + PLAYER_SIZE / 2;
-  return clamp(
-    Math.floor((centerX - POOL_X) / LANE_WIDTH),
-    0,
-    LANE_COUNT - 1
-  );
-}
-
-function rectsCollide(a, b) {
-  return (
-    a.x < b.x + b.w &&
-    a.x + a.w > b.x &&
-    a.y < b.y + b.h &&
-    a.y + a.h > b.y
-  );
 }
 
 function moveTowards(obj, targetX, targetY, speed) {
@@ -194,7 +222,7 @@ function moveTowards(obj, targetX, targetY, speed) {
   const dy = targetY - obj.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
 
-  if (dist <= speed) {
+  if (dist <= speed || dist === 0) {
     obj.x = targetX;
     obj.y = targetY;
     return true;
@@ -204,6 +232,13 @@ function moveTowards(obj, targetX, targetY, speed) {
   obj.y += (dy / dist) * speed;
 
   return false;
+}
+
+function verticalOverlap(aY, aH, bY, bH) {
+  return (
+    aY < bY + bH &&
+    aY + aH > bY
+  );
 }
 
 function isAhead(swimmer, other) {
@@ -218,22 +253,115 @@ function forwardDistance(swimmer, other) {
   return Math.abs(other.y - swimmer.y);
 }
 
-function sameLane(a, b) {
-  return a.lane === b.lane;
+// =====================================================
+// LOGICAL SUBLANE COLLISION / OCCUPANCY
+// =====================================================
+
+function getGroupMemberOffsets(s) {
+  const forward = s.speedY >= 0 ? 1 : -1;
+
+  if (s.groupSize === 2) {
+    return [
+      { subOffset: 0, y: 0 },
+      { subOffset: 1, y: 0 }
+    ];
+  }
+
+  return [
+    { subOffset: 0, y: 0 },
+    { subOffset: 1, y: 0 },
+    { subOffset: 0, y: -forward * 24 }
+  ];
 }
 
-function clampOffsetInsideLane(swimmer, offset) {
-  const maxOffset = 24;
-  return clamp(offset, -maxOffset, maxOffset);
+function getLogicalSwimmerParts(s) {
+  if (s.typeName !== "elderlyGroup") {
+    return [
+      {
+        globalSubLane: Math.round(s.globalSubLane),
+        y: s.y,
+        h: SWIMMER_SIZE
+      }
+    ];
+  }
+
+  if (s.state !== "swimming") {
+    return [
+      {
+        globalSubLane: Math.round(s.globalSubLane),
+        y: s.y,
+        h: SWIMMER_SIZE
+      }
+    ];
+  }
+
+  const offsets = getGroupMemberOffsets(s);
+
+  return offsets.map(o => {
+    return {
+      globalSubLane: Math.round(s.globalSubLane + o.subOffset),
+      y: s.y + o.y,
+      h: SWIMMER_SIZE
+    };
+  });
 }
 
-function chooseSideWithinLane(swimmer) {
-  let side = randomDirection();
+function swimmerOccupiesSubLane(s, globalSubLane) {
+  const parts = getLogicalSwimmerParts(s);
 
-  if (swimmer.lane === 0 && side < 0) side = 1;
-  if (swimmer.lane === LANE_COUNT - 1 && side > 0) side = -1;
+  return parts.some(part => part.globalSubLane === Math.round(globalSubLane));
+}
 
-  return side;
+function swimmersShareLogicalSubLane(a, b) {
+  const aParts = getLogicalSwimmerParts(a);
+  const bParts = getLogicalSwimmerParts(b);
+
+  for (const ap of aParts) {
+    for (const bp of bParts) {
+      if (ap.globalSubLane === bp.globalSubLane) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function playerCollidesWithSwimmerLogical(player, swimmer) {
+  const playerSubLane = Math.round(player.globalSubLane);
+  const parts = getLogicalSwimmerParts(swimmer);
+
+  for (const part of parts) {
+    if (part.globalSubLane !== playerSubLane) {
+      continue;
+    }
+
+    if (verticalOverlap(player.y, PLAYER_SIZE, part.y, part.h)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function chooseAdjacentGlobalSubLane(s) {
+  const options = [];
+
+  const currentSubLane = Math.round(s.globalSubLane);
+  const inside = subLaneInsideLane(currentSubLane);
+  const lane = s.lane;
+
+  if (inside > 0) {
+    options.push(globalSubLaneFromLaneAndSub(lane, inside - 1));
+  }
+
+  if (inside < SUB_LANES_PER_LANE - 1) {
+    options.push(globalSubLaneFromLaneAndSub(lane, inside + 1));
+  }
+
+  if (options.length === 0) return currentSubLane;
+
+  return randomFromArray(options);
 }
 
 // =====================================================
@@ -294,7 +422,31 @@ function applyPenalty(pushBack) {
     } else {
       player.y -= 10;
     }
+
+    player.y = clamp(player.y, POOL_Y, POOL_Y + POOL_HEIGHT - PLAYER_SIZE);
   }
+}
+
+// =====================================================
+// PLAYER HORIZONTAL MOVEMENT
+// =====================================================
+
+function movePlayerHorizontal(direction) {
+  const newSubLane = player.globalSubLane + direction;
+
+  if (newSubLane < 0 || newSubLane >= TOTAL_SUB_LANES) {
+    return;
+  }
+
+  const crossesLine = crossesMainLaneBoundary(player.globalSubLane, newSubLane);
+
+  if (crossesLine && !player.isDiving) {
+    applyPenalty(false);
+    return;
+  }
+
+  player.globalSubLane = newSubLane;
+  player.x = xForGlobalSubLane(player.globalSubLane);
 }
 
 // =====================================================
@@ -307,7 +459,9 @@ function lanePopulation(lane) {
     (
       s.state === "swimming" ||
       s.state === "walkingIn" ||
-      s.state === "waitingToJump"
+      s.state === "waitingToJump" ||
+      s.state === "goingToLadderToEnter" ||
+      s.state === "enteringByLadder"
     )
   ).length;
 }
@@ -318,7 +472,9 @@ function laneAverageSpeed(lane) {
     (
       s.state === "swimming" ||
       s.state === "walkingIn" ||
-      s.state === "waitingToJump"
+      s.state === "waitingToJump" ||
+      s.state === "goingToLadderToEnter" ||
+      s.state === "enteringByLadder"
     )
   );
 
@@ -400,6 +556,37 @@ function updatePathFollower(s) {
 }
 
 // =====================================================
+// ELDERLY ENTRY HELPERS
+// =====================================================
+
+function chooseEntryLadderForLane(lane) {
+  const wantRight = lane >= Math.floor(LANE_COUNT / 2);
+  const rightLadders = LADDERS.filter(l => l.side === "right");
+  const leftLadders = LADDERS.filter(l => l.side === "left");
+
+  if (wantRight) {
+    return randomFromArray(rightLadders);
+  }
+
+  return randomFromArray(leftLadders);
+}
+
+function buildElderlyEntryPath(ladder) {
+  const path = [];
+
+  path.push({ x: RIGHT_WALKWAY_X, y: GATE.y });
+  path.push({ x: RIGHT_WALKWAY_X, y: ladder.y });
+
+  if (ladder.side === "right") {
+    path.push({ x: POOL_X + POOL_WIDTH + DECK_MARGIN, y: ladder.y });
+  } else {
+    path.push({ x: POOL_X - DECK_MARGIN, y: ladder.y });
+  }
+
+  return path;
+}
+
+// =====================================================
 // SWIMMER TYPES
 // =====================================================
 
@@ -418,15 +605,15 @@ const SWIMMER_TYPES = {
       others.forEach(o => {
         if (o === s) return;
         if (o.state !== "swimming") return;
-        if (!sameLane(s, o)) return;
         if (!isAhead(s, o)) return;
+        if (!swimmersShareLogicalSubLane(s, o)) return;
 
         const distance = forwardDistance(s, o);
 
         if (distance < 95 && distance > 12 && !s.avoiding) {
           s.avoiding = true;
           s.avoidTimer = 85;
-          s.targetOffset = clampOffsetInsideLane(s, chooseSideWithinLane(s) * 26);
+          s.targetGlobalSubLane = chooseAdjacentGlobalSubLane(s);
           s.returnToLane = true;
         }
       });
@@ -446,8 +633,8 @@ const SWIMMER_TYPES = {
       others.forEach(o => {
         if (o === s) return;
         if (o.state !== "swimming") return;
-        if (!sameLane(s, o)) return;
         if (!isAhead(s, o)) return;
+        if (!swimmersShareLogicalSubLane(s, o)) return;
 
         const distance = forwardDistance(s, o);
 
@@ -457,8 +644,7 @@ const SWIMMER_TYPES = {
 
           s.avoiding = true;
           s.avoidTimer = 120;
-
-          s.targetOffset = clampOffsetInsideLane(s, chooseSideWithinLane(s) * 28);
+          s.targetGlobalSubLane = chooseAdjacentGlobalSubLane(s);
           s.returnToLane = true;
         }
       });
@@ -478,17 +664,15 @@ const SWIMMER_TYPES = {
       others.forEach(o => {
         if (o === s) return;
         if (o.state !== "swimming") return;
-        if (!sameLane(s, o)) return;
         if (!isAhead(s, o)) return;
+        if (!swimmersShareLogicalSubLane(s, o)) return;
 
         const distance = forwardDistance(s, o);
 
         if (distance < 110 && distance > 15 && !s.avoiding) {
           s.avoiding = true;
           s.avoidTimer = 125;
-
-          s.targetOffset = clampOffsetInsideLane(s, chooseSideWithinLane(s) * 30);
-
+          s.targetGlobalSubLane = chooseAdjacentGlobalSubLane(s);
           s.returnToLane = Math.random() < 0.5;
         }
       });
@@ -507,6 +691,20 @@ const SWIMMER_TYPES = {
     behavior: function(s, others) {
       // Deze zwemmer anticipeert niet en wijkt niet uit.
     }
+  },
+
+  elderlyGroup: {
+    label: "Bejaarden",
+    color: "#B06AD9",
+    stripe: "white",
+    speedMin: 3,
+    speedMax: 7,
+    lanesMin: 8,
+    lanesMax: 18,
+
+    behavior: function(s, others) {
+      // Bejaarden wijken niet uit en anticiperen niet.
+    }
   }
 };
 
@@ -516,18 +714,48 @@ const SWIMMER_TYPES = {
 
 function getAvailableSwimmerTypes() {
   if (level < 4) {
-    return ["ordinary"];
+    return [
+      "ordinary",
+      "ordinary",
+      "ordinary",
+      "ordinary",
+      "ordinary",
+      "ordinary",
+      "slower",
+      "elderlyGroup"
+    ];
   }
 
   if (level < 8) {
-    return ["ordinary", "slower"];
+    return [
+      "ordinary",
+      "ordinary",
+      "ordinary",
+      "slower",
+      "slower",
+      "elderlyGroup"
+    ];
   }
 
   if (level < 15) {
-    return ["ordinary", "slower", "friendlyCrawl"];
+    return [
+      "ordinary",
+      "ordinary",
+      "slower",
+      "friendlyCrawl",
+      "friendlyCrawl",
+      "elderlyGroup"
+    ];
   }
 
-  return ["ordinary", "slower", "friendlyCrawl", "unfriendlyCrawl"];
+  return [
+    "ordinary",
+    "slower",
+    "friendlyCrawl",
+    "friendlyCrawl",
+    "unfriendlyCrawl",
+    "elderlyGroup"
+  ];
 }
 
 // =====================================================
@@ -543,7 +771,15 @@ function createSwimmer(randomPosition) {
     ? Math.floor(Math.random() * LANE_COUNT)
     : chooseCalmestLane();
 
-  const baseX = laneCenterX(lane);
+  let globalSubLane;
+
+  if (typeName === "elderlyGroup") {
+    globalSubLane = randomElderlyStartSubLaneInLane(lane);
+  } else {
+    globalSubLane = randomGlobalSubLaneInLane(lane);
+  }
+
+  const baseX = xForSwimmerGlobalSubLane(globalSubLane);
 
   const fromTop = Math.random() < 0.5;
   const direction = fromTop ? 1 : -1;
@@ -562,15 +798,36 @@ function createSwimmer(randomPosition) {
   const jumpX = baseX;
   const jumpY = entryDeckY;
 
-  if (randomPosition) {
-    x = baseX;
-    y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
-    state = "swimming";
+  let entryLadder = null;
+  let groupSize = 1;
+  let enteringMember = 0;
+  let enterTimer = 0;
+
+  if (typeName === "elderlyGroup") {
+    groupSize = Math.random() < 0.65 ? 2 : 3;
+    entryLadder = chooseEntryLadderForLane(lane);
+
+    if (randomPosition) {
+      x = baseX;
+      y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
+      state = "swimming";
+    } else {
+      x = GATE.x;
+      y = GATE.y;
+      state = "goingToLadderToEnter";
+      path = buildElderlyEntryPath(entryLadder);
+    }
   } else {
-    x = GATE.x;
-    y = GATE.y;
-    state = "walkingIn";
-    path = buildEntryPath(jumpX, jumpY);
+    if (randomPosition) {
+      x = baseX;
+      y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
+      state = "swimming";
+    } else {
+      x = GATE.x;
+      y = GATE.y;
+      state = "walkingIn";
+      path = buildEntryPath(jumpX, jumpY);
+    }
   }
 
   return {
@@ -580,6 +837,10 @@ function createSwimmer(randomPosition) {
     state,
 
     lane,
+    globalSubLane,
+    originalGlobalSubLane: globalSubLane,
+    targetGlobalSubLane: globalSubLane,
+
     baseX,
     x,
     y,
@@ -592,10 +853,7 @@ function createSwimmer(randomPosition) {
 
     speedY: speed * direction,
     normalSpeed: speed,
-    walkSpeed: 1.5,
-
-    currentOffset: 0,
-    targetOffset: 0,
+    walkSpeed: typeName === "elderlyGroup" ? 0.85 : 1.5,
 
     avoiding: false,
     avoidTimer: 0,
@@ -609,7 +867,12 @@ function createSwimmer(randomPosition) {
 
     markedForExit: false,
     exitLadder: null,
-    removeMe: false
+    removeMe: false,
+
+    groupSize,
+    entryLadder,
+    enteringMember,
+    enterTimer
   };
 }
 
@@ -678,8 +941,7 @@ scheduleNextPopulationEvent();
 // =====================================================
 
 function updatePlayer() {
-  player.x += player.speedX;
-  player.x = clamp(player.x, POOL_X, POOL_X + POOL_WIDTH - PLAYER_SIZE);
+  player.x = xForGlobalSubLane(player.globalSubLane);
 
   if (!player.swimming) {
     player.y = POOL_Y + POOL_HEIGHT - PLAYER_SIZE;
@@ -739,7 +1001,7 @@ function updateWaitingToJump(s) {
 
   if (s.jumpTimer <= 0) {
     s.state = "swimming";
-    s.x = s.baseX;
+    s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
 
     if (s.fromTop) {
       s.y = POOL_Y;
@@ -747,6 +1009,46 @@ function updateWaitingToJump(s) {
     } else {
       s.y = POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
       s.speedY = -Math.abs(s.normalSpeed);
+    }
+  }
+}
+
+function updateGoingToLadderToEnter(s) {
+  const arrived = updatePathFollower(s);
+
+  if (arrived) {
+    s.state = "enteringByLadder";
+    s.enterTimer = 45;
+    s.enteringMember = 0;
+  }
+}
+
+function updateEnteringByLadder(s) {
+  s.enterTimer--;
+
+  if (s.entryLadder.side === "left") {
+    s.x = POOL_X - 12;
+  } else {
+    s.x = POOL_X + POOL_WIDTH - 8;
+  }
+
+  s.y = s.entryLadder.y + s.enteringMember * 10;
+
+  if (s.enterTimer <= 0) {
+    s.enteringMember++;
+
+    if (s.enteringMember >= s.groupSize) {
+      s.state = "swimming";
+      s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
+      s.y = s.entryLadder.y;
+
+      if (s.entryLadder.y < POOL_Y + POOL_HEIGHT / 2) {
+        s.speedY = Math.abs(s.normalSpeed);
+      } else {
+        s.speedY = -Math.abs(s.normalSpeed);
+      }
+    } else {
+      s.enterTimer = 45;
     }
   }
 }
@@ -772,8 +1074,7 @@ function nearestLadder(s) {
 function startExit(s) {
   s.exitLadder = nearestLadder(s);
   s.state = "goingToLadder";
-  s.targetOffset = 0;
-  s.currentOffset = 0;
+  s.targetGlobalSubLane = s.globalSubLane;
 }
 
 function updateGoingToLadder(s) {
@@ -833,21 +1134,29 @@ function updateSwimmerBehavior() {
         s.avoiding = false;
 
         if (s.returnToLane) {
-          s.targetOffset = 0;
-        } else {
-          s.targetOffset *= 0.45;
+          s.targetGlobalSubLane = s.originalGlobalSubLane;
         }
       }
     }
 
-    if (!s.avoiding && s.returnToLane) {
-      s.targetOffset = 0;
+    if (!s.avoiding && s.returnToLane && s.typeName !== "elderlyGroup") {
+      s.targetGlobalSubLane = s.originalGlobalSubLane;
     }
   });
 }
 
 function updateSwimmerMovement() {
   swimmers.forEach(s => {
+
+    if (s.state === "goingToLadderToEnter") {
+      updateGoingToLadderToEnter(s);
+      return;
+    }
+
+    if (s.state === "enteringByLadder") {
+      updateEnteringByLadder(s);
+      return;
+    }
 
     if (s.state === "walkingIn") {
       updateWalkingIn(s);
@@ -910,15 +1219,21 @@ function updateSwimmerMovement() {
       s.lanesSwum++;
     }
 
-    s.targetOffset = clampOffsetInsideLane(s, s.targetOffset);
-    s.currentOffset += (s.targetOffset - s.currentOffset) * 0.12;
+    if (s.typeName !== "elderlyGroup") {
+      s.globalSubLane += (s.targetGlobalSubLane - s.globalSubLane) * 0.15;
 
-    s.x = s.baseX + s.currentOffset;
+      const minGlobal = globalSubLaneFromLaneAndSub(s.lane, 0);
+      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, SUB_LANES_PER_LANE - 1);
 
-    const laneLeft = POOL_X + s.lane * LANE_WIDTH;
-    const laneRight = laneLeft + LANE_WIDTH - SWIMMER_SIZE;
+      s.globalSubLane = clamp(s.globalSubLane, minGlobal, maxGlobal);
+      s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
+    } else {
+      const minGlobal = globalSubLaneFromLaneAndSub(s.lane, 0);
+      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, SUB_LANES_PER_LANE - 2);
 
-    s.x = clamp(s.x, laneLeft + 4, laneRight - 4);
+      s.globalSubLane = clamp(s.globalSubLane, minGlobal, maxGlobal);
+      s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
+    }
   });
 
   swimmers = swimmers.filter(s => !s.removeMe);
@@ -938,51 +1253,13 @@ function updatePlayerCollisions() {
 
   if (hitCooldown > 0) hitCooldown--;
 
+  // Tijdens duiken bots je niet.
   if (player.isDiving) return;
 
-  const p = {
-    x: player.x,
-    y: player.y,
-    w: PLAYER_SIZE,
-    h: PLAYER_SIZE
-  };
-
-  // Botsing met lijnen
-  for (let i = 1; i < LANE_COUNT; i++) {
-    const lineX = POOL_X + i * LANE_WIDTH;
-
-    const touchesLine =
-      player.x < lineX + 3 &&
-      player.x + PLAYER_SIZE > lineX - 3;
-
-    if (touchesLine) {
-      applyPenalty(true);
-
-      const playerCenter = player.x + PLAYER_SIZE / 2;
-
-      if (playerCenter < lineX) {
-        player.x = lineX - PLAYER_SIZE - 4;
-      } else {
-        player.x = lineX + 4;
-      }
-
-      player.x = clamp(player.x, POOL_X, POOL_X + POOL_WIDTH - PLAYER_SIZE);
-      return;
-    }
-  }
-
-  // Botsing met andere zwemmers
   swimmers.forEach(s => {
     if (s.state !== "swimming") return;
 
-    const r = {
-      x: s.x,
-      y: s.y,
-      w: SWIMMER_SIZE,
-      h: SWIMMER_SIZE
-    };
-
-    if (rectsCollide(p, r)) {
+    if (playerCollidesWithSwimmerLogical(player, s)) {
       applyPenalty(true);
     }
   });
@@ -1063,6 +1340,20 @@ function drawPool() {
   ctx.fillStyle = "#4FC3F7";
   ctx.fillRect(POOL_X, POOL_Y, POOL_WIDTH, POOL_HEIGHT);
 
+  // Subbanen: dunne lijntjes
+  ctx.strokeStyle = "rgba(255,255,255,0.28)";
+  ctx.lineWidth = 1;
+
+  for (let i = 1; i < TOTAL_SUB_LANES; i++) {
+    if (i % SUB_LANES_PER_LANE === 0) continue;
+
+    ctx.beginPath();
+    ctx.moveTo(POOL_X + i * SUB_LANE_WIDTH, POOL_Y);
+    ctx.lineTo(POOL_X + i * SUB_LANE_WIDTH, POOL_Y + POOL_HEIGHT);
+    ctx.stroke();
+  }
+
+  // Grote baanlijnen: dikke witte lijnen
   ctx.strokeStyle = "white";
   ctx.lineWidth = 4;
 
@@ -1105,7 +1396,71 @@ function drawLadders() {
   });
 }
 
+function drawSingleSwimmerBlock(x, y, s, headDirection) {
+  ctx.fillStyle = s.type.color;
+  ctx.fillRect(x, y, SWIMMER_SIZE, SWIMMER_SIZE);
+
+  ctx.fillStyle = "black";
+
+  if (headDirection < 0) {
+    ctx.fillRect(x + 4, y - 4, 6, 4);
+  } else {
+    ctx.fillRect(x + 4, y + SWIMMER_SIZE, 6, 4);
+  }
+
+  ctx.fillStyle = s.type.stripe;
+  ctx.fillRect(x + 2, y + 6, 10, 3);
+}
+
+function drawElderlyGroup(s) {
+  if (s.state === "goingToLadderToEnter") {
+    for (let i = 0; i < s.groupSize; i++) {
+      drawSingleSwimmerBlock(s.x - i * 12, s.y + i * 10, s, 1);
+    }
+    return;
+  }
+
+  if (s.state === "enteringByLadder") {
+    for (let i = 0; i < s.groupSize; i++) {
+      let alpha = i <= s.enteringMember ? 1 : 0.45;
+      ctx.globalAlpha = alpha;
+
+      const offset = i * 12;
+      drawSingleSwimmerBlock(s.x, s.y + offset, s, 1);
+    }
+
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  if (s.state !== "swimming") {
+    drawSingleSwimmerBlock(s.x, s.y, s, 1);
+    return;
+  }
+
+  const offsets = getGroupMemberOffsets(s);
+
+  offsets.forEach(o => {
+    const global = Math.round(s.globalSubLane + o.subOffset);
+    const x = xForSwimmerGlobalSubLane(global);
+    const y = s.y + o.y;
+
+    drawSingleSwimmerBlock(x, y, s, s.speedY);
+  });
+
+  ctx.strokeStyle = "rgba(255,255,255,0.8)";
+  ctx.lineWidth = 1;
+
+  const leftX = xForSwimmerGlobalSubLane(Math.round(s.globalSubLane)) - 2;
+  ctx.strokeRect(leftX, s.y - 28, SUB_LANE_WIDTH * 2 + 8, 72);
+}
+
 function drawSwimmer(s) {
+  if (s.typeName === "elderlyGroup") {
+    drawElderlyGroup(s);
+    return;
+  }
+
   if (
     s.state === "walkingIn" ||
     s.state === "walkingOut" ||
@@ -1117,7 +1472,7 @@ function drawSwimmer(s) {
     ctx.fillRect(s.x, s.y, SWIMMER_SIZE, SWIMMER_SIZE);
 
     ctx.fillStyle = "black";
-    ctx.fillRect(s.x + 6, s.y - 4, 8, 4);
+    ctx.fillRect(s.x + 4, s.y - 4, 6, 4);
 
     if (s.state === "waitingToJump") {
       ctx.strokeStyle = "white";
@@ -1133,13 +1488,13 @@ function drawSwimmer(s) {
   ctx.fillStyle = "black";
 
   if (s.speedY < 0) {
-    ctx.fillRect(s.x + 6, s.y - 4, 8, 4);
+    ctx.fillRect(s.x + 4, s.y - 4, 6, 4);
   } else {
-    ctx.fillRect(s.x + 6, s.y + SWIMMER_SIZE, 8, 4);
+    ctx.fillRect(s.x + 4, s.y + SWIMMER_SIZE, 6, 4);
   }
 
   ctx.fillStyle = s.type.stripe;
-  ctx.fillRect(s.x + 3, s.y + 8, 14, 3);
+  ctx.fillRect(s.x + 2, s.y + 6, 10, 3);
 
   if (s.markedForExit) {
     ctx.strokeStyle = "white";
@@ -1154,7 +1509,7 @@ function drawPlayer() {
 
     ctx.globalAlpha = 0.22;
     ctx.fillStyle = "#003C8F";
-    ctx.fillRect(player.x + 3, player.y + 8, PLAYER_SIZE - 6, 7);
+    ctx.fillRect(player.x + 2, player.y + 6, PLAYER_SIZE - 4, 5);
 
     ctx.globalAlpha = 0.6;
     ctx.strokeStyle = "white";
@@ -1163,8 +1518,8 @@ function drawPlayer() {
     ctx.ellipse(
       player.x + PLAYER_SIZE / 2,
       player.y + PLAYER_SIZE / 2,
-      14 + (1 - progress) * 10,
-      5,
+      12 + (1 - progress) * 8,
+      4,
       0,
       0,
       Math.PI * 2
@@ -1182,9 +1537,9 @@ function drawPlayer() {
 
   if (player.swimming) {
     if (player.speedY < 0) {
-      ctx.fillRect(player.x + 6, player.y - 4, 8, 4);
+      ctx.fillRect(player.x + 4, player.y - 4, 6, 4);
     } else {
-      ctx.fillRect(player.x + 6, player.y + PLAYER_SIZE, 8, 4);
+      ctx.fillRect(player.x + 4, player.y + PLAYER_SIZE, 6, 4);
     }
   } else {
     ctx.fillStyle = "black";
@@ -1233,10 +1588,14 @@ function drawLegend() {
   ctx.fillStyle = "#111111";
   ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 525);
 
+  ctx.fillStyle = "#B06AD9";
+  ctx.fillText("PAARS bejaarden, 2 vakken", HUD_X + 5, 545);
+
   ctx.fillStyle = "white";
-  ctx.fillText("SPACE tijdens zwemmen = duik", HUD_X + 5, 555);
-  ctx.fillText("Tijdens duik: geen botsing", HUD_X + 5, 575);
-  ctx.fillText("Lijn raken zonder duik = boete", HUD_X + 5, 595);
+  ctx.fillText("←/→ = deelbaan wisselen", HUD_X + 5, 575);
+  ctx.fillText("SPACE zwemmen = duik", HUD_X + 5, 595);
+  ctx.fillText("Witte lijn alleen met duik", HUD_X + 5, 615);
+  ctx.fillText("Naast elkaar = geen botsing", HUD_X + 5, 635);
 }
 
 function draw() {
@@ -1288,8 +1647,13 @@ setInterval(() => {
 // =====================================================
 
 document.addEventListener("keydown", e => {
-  if (e.key === "ArrowLeft") player.speedX = -3;
-  if (e.key === "ArrowRight") player.speedX = 3;
+  if (e.key === "ArrowLeft") {
+    movePlayerHorizontal(-1);
+  }
+
+  if (e.key === "ArrowRight") {
+    movePlayerHorizontal(1);
+  }
 
   if (e.code === "Space") {
     if (!player.swimming) {
@@ -1322,12 +1686,6 @@ document.addEventListener("keydown", e => {
     }
 
     player.speedY = clamp(player.speedY, -player.maxSpeed, player.maxSpeed);
-  }
-});
-
-document.addEventListener("keyup", e => {
-  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-    player.speedX = 0;
   }
 });
 
