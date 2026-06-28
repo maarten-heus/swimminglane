@@ -336,6 +336,42 @@ function randomFromArray(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+const ACTIVE_POOL_STATES = new Set([
+  "swimming",
+  "walkingIn",
+  "waitingToJump",
+  "goingToLadderToEnter",
+  "enteringByLadder"
+]);
+
+function isPoolActiveSwimmer(s) {
+  return ACTIVE_POOL_STATES.has(s.state);
+}
+
+function getActiveSwimmers() {
+  return swimmers.filter(isPoolActiveSwimmer);
+}
+
+function getLaneSwimmers(lane) {
+  return swimmers.filter(s => s.lane === lane && isPoolActiveSwimmer(s));
+}
+
+function getLaneStats(lane) {
+  const laneSwimmers = getLaneSwimmers(lane);
+
+  if (laneSwimmers.length === 0) {
+    return { population: 0, avgSpeed: 0, aggression: 0 };
+  }
+
+  const sum = laneSwimmers.reduce((acc, s) => acc + Math.abs(s.normalSpeed), 0);
+
+  return {
+    population: laneSwimmers.length,
+    avgSpeed: sum / laneSwimmers.length,
+    aggression: laneSwimmers.filter(s => s.typeName === "unfriendlyCrawl").length
+  };
+}
+
 function moveTowards(obj, targetX, targetY, speed) {
   const dx = targetX - obj.x;
   const dy = targetY - obj.y;
@@ -737,57 +773,28 @@ function movePlayerHorizontal(direction) {
 // =====================================================
 
 function lanePopulation(lane) {
-  return swimmers.filter(s =>
-    s.lane === lane &&
-    (
-      s.state === "swimming" ||
-      s.state === "walkingIn" ||
-      s.state === "waitingToJump" ||
-      s.state === "goingToLadderToEnter" ||
-      s.state === "enteringByLadder"
-    )
-  ).length;
+  return getLaneStats(lane).population;
 }
 
 function laneAverageSpeed(lane) {
-  const laneSwimmers = swimmers.filter(s =>
-    s.lane === lane &&
-    (
-      s.state === "swimming" ||
-      s.state === "walkingIn" ||
-      s.state === "waitingToJump" ||
-      s.state === "goingToLadderToEnter" ||
-      s.state === "enteringByLadder"
-    )
-  );
-
-  if (laneSwimmers.length === 0) return 0;
-
-  const sum = laneSwimmers.reduce((acc, s) => acc + Math.abs(s.normalSpeed), 0);
-  return sum / laneSwimmers.length;
+  return getLaneStats(lane).avgSpeed;
 }
 
 function laneAggression(lane) {
-  return swimmers.filter(s =>
-    s.lane === lane &&
-    s.typeName === "unfriendlyCrawl" &&
-    (
-      s.state === "swimming" ||
-      s.state === "walkingIn" ||
-      s.state === "waitingToJump"
-    )
-  ).length;
+  return getLaneStats(lane).aggression;
 }
 
 function chooseCalmestLane() {
   const candidates = [];
 
   for (let lane = 0; lane < LANE_COUNT; lane++) {
+    const stats = getLaneStats(lane);
+
     candidates.push({
       lane,
-      count: lanePopulation(lane),
-      avgSpeed: laneAverageSpeed(lane),
-      aggression: laneAggression(lane)
+      count: stats.population,
+      avgSpeed: stats.avgSpeed,
+      aggression: stats.aggression
     });
   }
 
@@ -1499,10 +1506,10 @@ function updateWalkingOut(s) {
 // =====================================================
 
 function updateSwimmerBehavior() {
-  swimmers.forEach(s => {
-    if (s.state !== "swimming") return;
+  const activeSwimmers = getActiveSwimmers();
 
-    s.type.behavior(s, swimmers);
+  activeSwimmers.forEach(s => {
+    s.type.behavior(s, activeSwimmers);
 
     if (s.avoiding) {
       s.avoidTimer--;
@@ -1655,13 +1662,13 @@ function updatePairCollisionCooldowns() {
 function updateSwimmerCollisions() {
   updatePairCollisionCooldowns();
 
-  for (let i = 0; i < swimmers.length; i++) {
-    const a = swimmers[i];
-    if (a.state !== "swimming") continue;
+  const activeSwimmers = getActiveSwimmers();
 
-    for (let j = i + 1; j < swimmers.length; j++) {
-      const b = swimmers[j];
-      if (b.state !== "swimming") continue;
+  for (let i = 0; i < activeSwimmers.length; i++) {
+    const a = activeSwimmers[i];
+
+    for (let j = i + 1; j < activeSwimmers.length; j++) {
+      const b = activeSwimmers[j];
 
       if (!swimmersCollideLogical(a, b)) continue;
 
