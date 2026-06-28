@@ -47,7 +47,7 @@ const MAX_DIVES_PER_LEVEL = 3;
 const DIVE_DURATION = 55;
 
 const SWIMMER_PENALTY_DURATION = 180;
-const PAIR_COLLISION_LIMIT = 2;
+const PAIR_COLLISION_LIMIT = 1;
 const PAIR_COLLISION_COOLDOWN = 50;
 
 const LANES_PER_LEVEL = 10;
@@ -164,6 +164,8 @@ function resetForNextLevel(oldSubLaneCount, newSubLaneCount) {
   s.avoiding = false;
   s.stopped = false;
   s.stopTimer = 0;
+  s.wantsToReturn = false;
+  s.returnCooldown = 0;
 
   // ✅ NIEUW: reset zwemdoel
   s.lanesSwum = 0;
@@ -406,11 +408,14 @@ function isAhead(swimmer, other) {
 }
 
 
+function isApproachingHeadOn(s, o) {
+  return Math.sign(s.speedY) !== Math.sign(o.speedY);
+}
+
 function shouldAvoid(s, o) {
 
-
   // =========================
-  // ✅ 0. Bejaarden hebben voorrang
+  // 0. Bejaarden hebben voorrang
   // =========================
 
   if (o.typeName === "elderlyGroup" && s.typeName !== "elderlyGroup") {
@@ -421,27 +426,19 @@ function shouldAvoid(s, o) {
     return false; // bejaarde blijft
   }
 
-
   // =========================
   // 1. Zelfde zwemrichting
   // =========================
   if (Math.sign(s.speedY) === Math.sign(o.speedY)) {
-
     // s zit achter o → s moet uitwijken
     return isAhead(s, o);
   }
 
   // =========================
   // 2. Tegengestelde richting (frontaal)
+  // BEIDE zwemmers wijken uit — niet alleen de lagere ID
   // =========================
-
-  // 👉 kies 1 swimmer die moet wijken
-  // stabiel: degene met lagere id wijkt uit
-  if (s.id < o.id) {
-    return true;
-  } else {
-    return false;
-  }
+  return true;
 }
 
 
@@ -868,29 +865,56 @@ function buildElderlyEntryPath(ladder) {
 // SWIMMER TYPES
 // =====================================================
 
+function chooseBestAvoidanceTarget(s, o) {
+  const lane = s.lane;
+  const currentSub = subLaneInsideLane(Math.round(s.globalSubLane));
+  const numSubs = getSubLanesPerLane();
+  const headOn = o ? isApproachingHeadOn(s, o) : false;
+
+  // For elderly groups, need 2 adjacent free sub-lanes
+  if (s.typeName === "elderlyGroup") {
+    const candidates = [];
+    for (let sub = 0; sub < numSubs - 1; sub++) {
+      const g1 = globalSubLaneFromLaneAndSub(lane, sub);
+      const g2 = globalSubLaneFromLaneAndSub(lane, sub + 1);
+      candidates.push({
+        globalSubLane: g1,
+        count: countSwimmersInGlobalSubLane(g1, s) + countSwimmersInGlobalSubLane(g2, s)
+      });
+    }
+    candidates.sort((a, b) => a.count - b.count || Math.random() - 0.5);
+    return candidates[0].globalSubLane;
+  }
+
+  // Build candidate sub-lanes with scores
+  const options = [];
+  for (let sub = 0; sub < numSubs; sub++) {
+    if (sub === currentSub) continue;
+    const g = globalSubLaneFromLaneAndSub(lane, sub);
+    const count = countSwimmersInGlobalSubLane(g, s);
+    const dist = Math.abs(sub - currentSub);
+
+    // For head-on: use ID parity to send swimmers to opposite sides
+    // Even ID prefers lower sub-lane, odd ID prefers higher
+    let preferenceBonus = 0;
+    if (headOn) {
+      const prefersLeft = (s.id % 2 === 0);
+      if (prefersLeft && sub < currentSub) preferenceBonus = -1;
+      if (!prefersLeft && sub > currentSub) preferenceBonus = -1;
+    }
+
+    options.push({ globalSubLane: g, score: count * 3 + dist + preferenceBonus });
+  }
+
+  if (options.length === 0) return Math.round(s.globalSubLane);
+
+  options.sort((a, b) => a.score - b.score);
+  return options[0].globalSubLane;
+}
+
+// Keep old name as alias for elder-specific call sites
 function chooseWideAvoidance(s, o) {
-
-  let shift = 1;
-
-  if (s.typeName === "elderlyGroup" || o.typeName === "elderlyGroup") {
-    shift = 2;
-  }
-
-  const min = globalSubLaneFromLaneAndSub(s.lane, 0);
-  const max = globalSubLaneFromLaneAndSub(s.lane, getSubLanesPerLane() - 1);
-
-  // ✅ richting van centrum af (heel belangrijk!)
-  const center = (min + max) / 2;
-
-  let target;
-
-  if (s.globalSubLane < center) {
-    target = s.globalSubLane - shift;
-  } else {
-    target = s.globalSubLane + shift;
-  }
-
-  return clamp(target, min, max);
+  return chooseBestAvoidanceTarget(s, o);
 }
 
 const SWIMMER_TYPES = {
@@ -909,15 +933,23 @@ const SWIMMER_TYPES = {
         if (o === s) return;
         if (o.state !== "swimming") return;
         if (!shouldAvoid(s, o)) return;
-        if (!swimmersShareLogicalSubLane(s, o)) return;
+
+        const headOn = isApproachingHeadOn(s, o);
+        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
+
+        // Detect head-on from further away, also from adjacent sub-lanes
+        const laterallyClose = headOn ? subLaneDiff <= 1 : swimmersShareLogicalSubLane(s, o);
+        if (!laterallyClose) return;
 
         const distance = forwardDistance(s, o);
+        const detectionRange = headOn ? 130 : 95;
 
-        if (distance < 95 && distance > 12 && !s.avoiding) {
+        if (distance < detectionRange && distance > 12 && !s.avoiding) {
           s.avoiding = true;
-          s.avoidTimer = 85;
-          s.targetGlobalSubLane = chooseWideAvoidance(s, o);
-          s.returnToLane = true;
+          s.avoidTimer = headOn ? 110 : 85;
+          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
+          // Don't snap back to original lane after head-on — causes oscillation
+          s.returnToLane = !headOn;
         }
       });
     }
@@ -937,18 +969,25 @@ const SWIMMER_TYPES = {
         if (o === s) return;
         if (o.state !== "swimming") return;
         if (!shouldAvoid(s, o)) return;
-        if (!swimmersShareLogicalSubLane(s, o)) return;
+
+        const headOn = isApproachingHeadOn(s, o);
+        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
+        const laterallyClose = headOn ? subLaneDiff <= 1 : swimmersShareLogicalSubLane(s, o);
+        if (!laterallyClose) return;
 
         const distance = forwardDistance(s, o);
+        const detectionRange = headOn ? 110 : 60;
 
-        if (distance < 55 && distance > 10 && !s.avoiding && !s.stopped) {
-          s.stopped = true;
-          s.stopTimer = 25;
+        if (distance < detectionRange && distance > 10 && !s.avoiding && !s.stopped) {
+          if (!headOn) {
+            s.stopped = true;
+            s.stopTimer = 20;
+          }
 
           s.avoiding = true;
-          s.avoidTimer = 120;
-          s.targetGlobalSubLane = chooseWideAvoidance(s, o);
-          s.returnToLane = true;
+          s.avoidTimer = headOn ? 120 : 130;
+          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
+          s.returnToLane = !headOn;
         }
       });
     }
@@ -968,15 +1007,20 @@ const SWIMMER_TYPES = {
         if (o === s) return;
         if (o.state !== "swimming") return;
         if (!shouldAvoid(s, o)) return;
-        if (!swimmersShareLogicalSubLane(s, o)) return;
+
+        const headOn = isApproachingHeadOn(s, o);
+        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
+        const laterallyClose = headOn ? subLaneDiff <= 1 : swimmersShareLogicalSubLane(s, o);
+        if (!laterallyClose) return;
 
         const distance = forwardDistance(s, o);
+        const detectionRange = headOn ? 150 : 110;
 
-        if (distance < 110 && distance > 15 && !s.avoiding) {
+        if (distance < detectionRange && distance > 15 && !s.avoiding) {
           s.avoiding = true;
-          s.avoidTimer = 125;
-          s.targetGlobalSubLane = chooseWideAvoidance(s, o);
-          s.returnToLane = Math.random() < 0.5;
+          s.avoidTimer = headOn ? 130 : 125;
+          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
+          s.returnToLane = !headOn && Math.random() < 0.5;
         }
       });
     }
@@ -992,7 +1036,24 @@ const SWIMMER_TYPES = {
     lanesMax: 50,
 
     behavior: function(s, others) {
-      // Anticipeert niet.
+      // Botst liever, maar wijkt minimaal uit voor frontale botsingen
+      others.forEach(o => {
+        if (o === s) return;
+        if (o.state !== "swimming") return;
+        if (!isApproachingHeadOn(s, o)) return;
+
+        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
+        if (subLaneDiff > 0) return; // alleen als direct frontaal
+
+        const distance = forwardDistance(s, o);
+
+        if (distance < 50 && distance > 8 && !s.avoiding) {
+          s.avoiding = true;
+          s.avoidTimer = 70;
+          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
+          s.returnToLane = false;
+        }
+      });
     }
   },
 
@@ -1203,6 +1264,8 @@ function createSwimmer(randomPosition) {
     avoiding: false,
     avoidTimer: 0,
     returnToLane: true,
+    wantsToReturn: false,
+    returnCooldown: 0,
 
     stopped: false,
     stopTimer: 0,
@@ -1511,6 +1574,9 @@ function updateSwimmerBehavior() {
   activeSwimmers.forEach(s => {
     s.type.behavior(s, activeSwimmers);
 
+    // Tick down return-to-lane cooldown
+    if (s.returnCooldown > 0) s.returnCooldown--;
+
     if (s.avoiding) {
       s.avoidTimer--;
 
@@ -1518,13 +1584,23 @@ function updateSwimmerBehavior() {
         s.avoiding = false;
 
         if (s.returnToLane) {
-          s.targetGlobalSubLane = s.originalGlobalSubLane;
+          // Only queue a return — we'll check below if it's actually safe
+          s.wantsToReturn = true;
         }
       }
     }
 
-    if (!s.avoiding && s.returnToLane && s.typeName !== "elderlyGroup") {
-      s.targetGlobalSubLane = s.originalGlobalSubLane;
+    // Return to original lane only when it's free and cooldown is done
+    if (!s.avoiding && s.wantsToReturn && s.typeName !== "elderlyGroup") {
+      if ((s.returnCooldown || 0) <= 0) {
+        const occupancy = countSwimmersInGlobalSubLane(s.originalGlobalSubLane, s);
+        if (occupancy === 0) {
+          s.targetGlobalSubLane = s.originalGlobalSubLane;
+          s.wantsToReturn = false;
+          s.returnCooldown = 45; // short cooldown after returning
+        }
+        // If original lane still busy, stay put and try again next frame
+      }
     }
   });
 }
