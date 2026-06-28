@@ -3,23 +3,12 @@
 <head>
   <title>Zwembad Game</title>
   <style>
-    body {
-      margin: 0;
-      background: #b7e3f7;
-      font-family: Arial, sans-serif;
-    }
-
-    canvas {
-      display: block;
-      margin: auto;
-      background: #b7e3f7;
-    }
+    body { margin: 0; background: #b7e3f7; font-family: Arial, sans-serif; }
+    canvas { display: block; margin: auto; background: #b7e3f7; }
   </style>
 </head>
 <body>
-
 <canvas id="game" width="720" height="1000"></canvas>
-
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -32,43 +21,29 @@ const POOL_X = 60;
 const POOL_Y = 90;
 const POOL_WIDTH = 400;
 const POOL_HEIGHT = 600;
-
 const HUD_X = 500;
-
 const LANE_COUNT = 5;
 const LANE_WIDTH = 80;
-
 const SWIMMER_SIZE = 14;
 const PLAYER_SIZE = 14;
-
 const DECK_MARGIN = 34;
-
 const MAX_DIVES_PER_LEVEL = 3;
 const DIVE_DURATION = 55;
-
 const SWIMMER_PENALTY_DURATION = 180;
 const PAIR_COLLISION_LIMIT = 1;
 const PAIR_COLLISION_COOLDOWN = 50;
-
 const LANES_PER_LEVEL = 10;
 const MAX_LEVEL = 30;
 
-const GATE = {
-  x: 660,
-  y: 390
-};
-
+const GATE = { x: 660, y: 390 };
 const RIGHT_WALKWAY_X = POOL_X + POOL_WIDTH + DECK_MARGIN;
 const TOP_WALKWAY_Y = POOL_Y - DECK_MARGIN;
 const BOTTOM_WALKWAY_Y = POOL_Y + POOL_HEIGHT + DECK_MARGIN;
 
 const LADDERS = [
-  // BOVEN (korte zijde)
-  { name: "boven links", side: "top", x: POOL_X + 20, y: POOL_Y - 8 },
-  { name: "boven rechts", side: "top", x: POOL_X + POOL_WIDTH - 20, y: POOL_Y - 8 },
-
-  // ONDER (korte zijde)
-  { name: "onder links", side: "bottom", x: POOL_X + 20, y: POOL_Y + POOL_HEIGHT + 8 },
+  { name: "boven links",  side: "top",    x: POOL_X + 20,              y: POOL_Y - 8 },
+  { name: "boven rechts", side: "top",    x: POOL_X + POOL_WIDTH - 20, y: POOL_Y - 8 },
+  { name: "onder links",  side: "bottom", x: POOL_X + 20,              y: POOL_Y + POOL_HEIGHT + 8 },
   { name: "onder rechts", side: "bottom", x: POOL_X + POOL_WIDTH - 20, y: POOL_Y + POOL_HEIGHT + 8 }
 ];
 
@@ -76,143 +51,111 @@ const LADDERS = [
 // DYNAMIC SUBLANE CONFIG
 // =====================================================
 
-function getSubLanesPerLane() {
-  return level < 10 ? 3 : 5;
-}
-
-function getSubLaneWidth() {
-  return LANE_WIDTH / getSubLanesPerLane();
-}
-
-function getTotalSubLanes() {
-  return LANE_COUNT * getSubLanesPerLane();
-}
+function getSubLanesPerLane() { return level < 10 ? 3 : 5; }
+function getSubLaneWidth()    { return LANE_WIDTH / getSubLanesPerLane(); }
+function getTotalSubLanes()   { return LANE_COUNT * getSubLanesPerLane(); }
 
 // =====================================================
 // GAME STATE
 // =====================================================
 
 let swimmers = [];
-
 let lanesCompleted = 0;
 let lanesThisLevel = 0;
-
 let hits = 0;
 let maxHits = 5;
 let timeLeft = 90;
 let hitCooldown = 0;
-
 let level = 1;
-
 let nextSwimmerId = 1;
 let pairCollisionCounts = {};
 let pairCollisionCooldowns = {};
-
 let overlay = null;
 let gamePaused = false;
 let gameFinished = false;
+
+// =====================================================
+// GROUP TYPE HELPERS
+// =====================================================
+
+const WIDE_GROUP_TYPE_NAMES = new Set([
+  "elderlyGroup","seniorFitness","butterflyStroke",
+  "backstrokeDuo","synchroDuo","rubberDinghy",
+  "synchroTeam","lessonGroup","schoolClass"
+]);
+
+function isWideGroupType(s) { return WIDE_GROUP_TYPE_NAMES.has(s.typeName); }
+
+function getGroupMemberOffsets(s) {
+  const fwd = s.speedY >= 0 ? 1 : -1;
+  const layout = s.type.groupLayout || "triangle";
+  if (layout === "row2") return [{ subOffset:0,y:0 },{ subOffset:1,y:0 }];
+  if (layout === "row3") return [{ subOffset:0,y:0 },{ subOffset:1,y:0 },{ subOffset:2,y:0 }];
+  if (layout === "column3") return [{ subOffset:0,y:0 },{ subOffset:0,y:-fwd*26 },{ subOffset:0,y:-fwd*52 }];
+  // triangle (elderlyGroup default)
+  if (s.groupSize === 2) return [{ subOffset:0,y:0 },{ subOffset:1,y:0 }];
+  return [{ subOffset:0,y:0 },{ subOffset:1,y:0 },{ subOffset:0,y:-fwd*24 }];
+}
 
 // =====================================================
 // OVERLAY / LEVEL SYSTEM
 // =====================================================
 
 function showOverlay(text, durationFrames, onDone) {
-  overlay = {
-    text,
-    timer: durationFrames,
-    duration: durationFrames,
-    onDone
-  };
+  overlay = { type:"text", text, timer:durationFrames, duration:durationFrames, onDone };
+  gamePaused = true;
+}
+
+function showNewSwimmerIntro(lvl, onDone) {
+  overlay = { type:"swimmerIntro", level:lvl, typeName:LEVEL_SWIMMER_INTRO[lvl], timer:270, duration:270, onDone };
   gamePaused = true;
 }
 
 function updateOverlay() {
   if (!overlay) return;
-
   overlay.timer--;
-
   if (overlay.timer <= 0) {
     const done = overlay.onDone;
     overlay = null;
-
-    if (done) {
-      done();
-    }
+    if (done) done();
   }
 }
 
 function resetForNextLevel(oldSubLaneCount, newSubLaneCount) {
-  lanesThisLevel = 0;
-  hits = 0;
-  hitCooldown = 0;
-  timeLeft = 90;
-
-  player.penaltyTimer = 0;
-  player.color = "blue";
+  lanesThisLevel = 0; hits = 0; hitCooldown = 0; timeLeft = 90;
+  player.penaltyTimer = 0; player.color = "blue";
   player.divesLeft = MAX_DIVES_PER_LEVEL;
-  player.isDiving = false;
-  player.diveTimer = 0;
-
-  player.globalSubLane = globalSubLaneFromLaneAndSub(
-    2,
-    Math.floor(getSubLanesPerLane() / 2)
-  );
+  player.isDiving = false; player.diveTimer = 0;
+  player.swimming = false; player.y = POOL_Y - 22;
+  player.globalSubLane = globalSubLaneFromLaneAndSub(2, Math.floor(getSubLanesPerLane()/2));
   player.x = xForGlobalSubLane(player.globalSubLane);
 
   swimmers.forEach(s => {
-  s.penaltyTimer = 0;
-  s.avoiding = false;
-  s.stopped = false;
-  s.stopTimer = 0;
-  s.wantsToReturn = false;
-  s.returnCooldown = 0;
+    s.penaltyTimer = 0; s.avoiding = false; s.stopped = false; s.stopTimer = 0;
+    s.wantsToReturn = false; s.returnCooldown = 0; s.lanesSwum = 0;
+    s.targetLanes = s.type.lanesMin + Math.floor(Math.random()*(s.type.lanesMax-s.type.lanesMin+1));
+    s.markedForExit = false;
+  });
 
-  // ✅ NIEUW: reset zwemdoel
-  s.lanesSwum = 0;
-
-  const type = s.type;
-  s.targetLanes =
-    type.lanesMin +
-    Math.floor(Math.random() * (type.lanesMax - type.lanesMin + 1));
-
-  s.markedForExit = false;
-});
-
-  pairCollisionCounts = {};
-  pairCollisionCooldowns = {};
-
-  if (oldSubLaneCount !== newSubLaneCount) {
-    populateInitialSwimmers();
-  }
+  pairCollisionCounts = {}; pairCollisionCooldowns = {};
+  if (oldSubLaneCount !== newSubLaneCount) populateInitialSwimmers();
 }
 
 function checkLevelProgress() {
-  if (gameFinished) return;
-  if (overlay) return;
-  if (lanesThisLevel < LANES_PER_LEVEL) return;
-
+  if (gameFinished || overlay || lanesThisLevel < LANES_PER_LEVEL) return;
   const clearedLevel = level;
   const oldSubLaneCount = getSubLanesPerLane();
 
-  showOverlay("LEVEL " + clearedLevel + " CLEARED", 150, () => {
+  showOverlay("LEVEL " + clearedLevel + " CLEARED", 120, () => {
     if (clearedLevel >= MAX_LEVEL) {
       gameFinished = true;
-      overlay = {
-        text: "GOED GEZWOMMEN!",
-        timer: 999999,
-        duration: 999999,
-        onDone: null
-      };
-      gamePaused = true;
-      return;
+      overlay = { type:"text", text:"GOED GEZWOMMEN!", timer:999999, duration:999999, onDone:null };
+      gamePaused = true; return;
     }
-
     level++;
-
     const newSubLaneCount = getSubLanesPerLane();
-
     resetForNextLevel(oldSubLaneCount, newSubLaneCount);
-    gamePaused = false;
+    showNewSwimmerIntro(level, () => { gamePaused = false; });
   });
 }
 
@@ -220,449 +163,196 @@ function checkLevelProgress() {
 // LEVEL CONFIG
 // =====================================================
 
-function getLevelConfig(level) {
-  if (level < 10) {
-    return { maxSwimmers: 30, startSwimmers: 15 };
-  }
-
-  if (level < 20) {
-    return { maxSwimmers: 40, startSwimmers: 30 };
-  }
-
-  if (level < 30) {
-    return { maxSwimmers: 50, startSwimmers: 45 };
-  }
-
-  return { maxSwimmers: 75, startSwimmers: 50 };
+function getLevelConfig(lvl) {
+  if (lvl < 10) return { maxSwimmers:28, startSwimmers:12 };
+  if (lvl < 20) return { maxSwimmers:38, startSwimmers:25 };
+  if (lvl < 30) return { maxSwimmers:48, startSwimmers:40 };
+  return { maxSwimmers:70, startSwimmers:50 };
 }
-
-function getMaxSwimmers() {
-  return getLevelConfig(level).maxSwimmers;
-}
-
-function getStartSwimmers() {
-  return getLevelConfig(level).startSwimmers;
-}
+function getMaxSwimmers()   { return getLevelConfig(level).maxSwimmers; }
+function getStartSwimmers() { return getLevelConfig(level).startSwimmers; }
 
 // =====================================================
 // SPEED SCALE
 // =====================================================
 
-function speedFromScale(min, max) {
-  const value = min + Math.random() * (max - min);
-  return value * 0.08;
-}
+function speedFromScale(min, max) { return (min + Math.random()*(max-min)) * 0.08; }
 
 // =====================================================
 // GRID HELPERS
 // =====================================================
 
-function laneFromGlobalSubLane(globalSubLane) {
-  return Math.floor(Math.round(globalSubLane) / getSubLanesPerLane());
-}
-
-function subLaneInsideLane(globalSubLane) {
-  return Math.round(globalSubLane) % getSubLanesPerLane();
-}
-
-function globalSubLaneFromLaneAndSub(lane, subLane) {
-  return lane * getSubLanesPerLane() + subLane;
-}
-
-function xForGlobalSubLane(globalSubLane) {
-  return POOL_X
-    + Math.round(globalSubLane) * getSubLaneWidth()
-    + getSubLaneWidth() / 2
-    - PLAYER_SIZE / 2;
-}
-
-function xForSwimmerGlobalSubLane(globalSubLane) {
-  return POOL_X
-    + Math.round(globalSubLane) * getSubLaneWidth()
-    + getSubLaneWidth() / 2
-    - SWIMMER_SIZE / 2;
-}
-
-function randomGlobalSubLaneInLane(lane) {
-  return globalSubLaneFromLaneAndSub(
-    lane,
-    Math.floor(Math.random() * getSubLanesPerLane())
-  );
-}
-
+function laneFromGlobalSubLane(g)          { return Math.floor(Math.round(g)/getSubLanesPerLane()); }
+function subLaneInsideLane(g)              { return Math.round(g) % getSubLanesPerLane(); }
+function globalSubLaneFromLaneAndSub(l,s)  { return l*getSubLanesPerLane()+s; }
+function xForGlobalSubLane(g)              { return POOL_X + Math.round(g)*getSubLaneWidth() + getSubLaneWidth()/2 - PLAYER_SIZE/2; }
+function xForSwimmerGlobalSubLane(g)       { return POOL_X + Math.round(g)*getSubLaneWidth() + getSubLaneWidth()/2 - SWIMMER_SIZE/2; }
+function randomGlobalSubLaneInLane(lane)   { return globalSubLaneFromLaneAndSub(lane, Math.floor(Math.random()*getSubLanesPerLane())); }
 function randomElderlyStartSubLaneInLane(lane) {
-  const maxStart = Math.max(0, getSubLanesPerLane() - 2);
-  const sub = Math.floor(Math.random() * (maxStart + 1));
-  return globalSubLaneFromLaneAndSub(lane, sub);
+  const maxStart = Math.max(0, getSubLanesPerLane()-2);
+  return globalSubLaneFromLaneAndSub(lane, Math.floor(Math.random()*(maxStart+1)));
 }
-
-function crossesMainLaneBoundary(fromGlobalSubLane, toGlobalSubLane) {
-  return laneFromGlobalSubLane(fromGlobalSubLane) !== laneFromGlobalSubLane(toGlobalSubLane);
-}
+function crossesMainLaneBoundary(from, to) { return laneFromGlobalSubLane(from) !== laneFromGlobalSubLane(to); }
 
 // =====================================================
 // PLAYER
 // =====================================================
 
 let player = {
-  globalSubLane: globalSubLaneFromLaneAndSub(2, 1),
-
-  x: xForGlobalSubLane(globalSubLaneFromLaneAndSub(2, 1)),
-  y: POOL_Y - 22, // ✅ boven water (op rand)
-  speedY: 0,
-
-  baseSpeed: 2.0,
-  maxSpeed: 3.0,
-  minSpeed: 0.8,
-
-  swimming: false,
-  color: "blue",
-
-  penaltyTimer: 0,
-  penaltyDuration: 180,
-
-  divesLeft: MAX_DIVES_PER_LEVEL,
-  isDiving: false,
-  diveTimer: 0
+  globalSubLane: globalSubLaneFromLaneAndSub(2,1),
+  x: xForGlobalSubLane(globalSubLaneFromLaneAndSub(2,1)),
+  y: POOL_Y - 22, speedY: 0,
+  baseSpeed: 2.0, maxSpeed: 3.0, minSpeed: 0.8,
+  swimming: false, color: "blue",
+  penaltyTimer: 0, penaltyDuration: 180,
+  divesLeft: MAX_DIVES_PER_LEVEL, isDiving: false, diveTimer: 0
 };
 
 // =====================================================
 // BASIC HELPERS
 // =====================================================
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+function clamp(v,mn,mx) { return Math.max(mn,Math.min(mx,v)); }
+function randomFromArray(arr) { return arr[Math.floor(Math.random()*arr.length)]; }
 
-function randomFromArray(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-const ACTIVE_POOL_STATES = new Set([
-  "swimming",
-  "walkingIn",
-  "waitingToJump",
-  "goingToLadderToEnter",
-  "enteringByLadder"
-]);
-
-function isPoolActiveSwimmer(s) {
-  return ACTIVE_POOL_STATES.has(s.state);
-}
-
-function getActiveSwimmers() {
-  return swimmers.filter(isPoolActiveSwimmer);
-}
-
-function getLaneSwimmers(lane) {
-  return swimmers.filter(s => s.lane === lane && isPoolActiveSwimmer(s));
-}
+const ACTIVE_POOL_STATES = new Set(["swimming","walkingIn","waitingToJump","goingToLadderToEnter","enteringByLadder","parachuting"]);
+function isPoolActiveSwimmer(s) { return ACTIVE_POOL_STATES.has(s.state); }
+function getActiveSwimmers()    { return swimmers.filter(isPoolActiveSwimmer); }
+function getLaneSwimmers(lane)  { return swimmers.filter(s => s.lane===lane && isPoolActiveSwimmer(s)); }
 
 function getLaneStats(lane) {
-  const laneSwimmers = getLaneSwimmers(lane);
-
-  if (laneSwimmers.length === 0) {
-    return { population: 0, avgSpeed: 0, aggression: 0 };
-  }
-
-  const sum = laneSwimmers.reduce((acc, s) => acc + Math.abs(s.normalSpeed), 0);
-
-  return {
-    population: laneSwimmers.length,
-    avgSpeed: sum / laneSwimmers.length,
-    aggression: laneSwimmers.filter(s => s.typeName === "unfriendlyCrawl").length
-  };
+  const ls = getLaneSwimmers(lane);
+  if (!ls.length) return { population:0, avgSpeed:0, aggression:0 };
+  const sum = ls.reduce((a,s)=>a+Math.abs(s.normalSpeed),0);
+  return { population:ls.length, avgSpeed:sum/ls.length, aggression:ls.filter(s=>s.typeName==="unfriendlyCrawl").length };
 }
 
-function moveTowards(obj, targetX, targetY, speed) {
-  const dx = targetX - obj.x;
-  const dy = targetY - obj.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-
-  if (dist <= speed || dist === 0) {
-    obj.x = targetX;
-    obj.y = targetY;
-    return true;
-  }
-
-  obj.x += (dx / dist) * speed;
-  obj.y += (dy / dist) * speed;
-
-  return false;
+function moveTowards(obj,tx,ty,speed) {
+  const dx=tx-obj.x, dy=ty-obj.y, dist=Math.sqrt(dx*dx+dy*dy);
+  if (dist<=speed||dist===0) { obj.x=tx; obj.y=ty; return true; }
+  obj.x+=(dx/dist)*speed; obj.y+=(dy/dist)*speed; return false;
 }
 
-function verticalOverlap(aY, aH, bY, bH) {
-  return (
-    aY < bY + bH &&
-    aY + aH > bY
-  );
-}
+function verticalOverlap(ay,ah,by,bh) { return ay<by+bh && ay+ah>by; }
+function isAhead(swimmer,other) { return swimmer.speedY>0 ? other.y>swimmer.y : other.y<swimmer.y; }
+function isApproachingHeadOn(s,o) { return Math.sign(s.speedY)!==Math.sign(o.speedY); }
 
-
-function isAhead(swimmer, other) {
-  if (swimmer.speedY > 0) {
-    return other.y > swimmer.y;
-  } else {
-    return other.y < swimmer.y;
-  }
-}
-
-
-function isApproachingHeadOn(s, o) {
-  return Math.sign(s.speedY) !== Math.sign(o.speedY);
-}
-
-function shouldAvoid(s, o) {
-
-  // =========================
-  // 0. Bejaarden hebben voorrang
-  // =========================
-
-  if (o.typeName === "elderlyGroup" && s.typeName !== "elderlyGroup") {
-    return true; // jij wijkt uit
-  }
-
-  if (s.typeName === "elderlyGroup" && o.typeName !== "elderlyGroup") {
-    return false; // bejaarde blijft
-  }
-
-  // =========================
-  // 1. Zelfde zwemrichting
-  // =========================
-  if (Math.sign(s.speedY) === Math.sign(o.speedY)) {
-    // s zit achter o → s moet uitwijken
-    return isAhead(s, o);
-  }
-
-  // =========================
-  // 2. Tegengestelde richting (frontaal)
-  // BEIDE zwemmers wijken uit — niet alleen de lagere ID
-  // =========================
+function shouldAvoid(s,o) {
+  if (o.typeName==="elderlyGroup" && s.typeName!=="elderlyGroup") return true;
+  if (s.typeName==="elderlyGroup" && o.typeName!=="elderlyGroup") return false;
+  if (Math.sign(s.speedY)===Math.sign(o.speedY)) return isAhead(s,o);
   return true;
 }
 
-
-
-function forwardDistance(swimmer, other) {
-  return Math.abs(other.y - swimmer.y);
-}
-
-function pairKey(a, b) {
-  const first = Math.min(a.id, b.id);
-  const second = Math.max(a.id, b.id);
-  return first + "-" + second;
-}
+function forwardDistance(s,o) { return Math.abs(o.y-s.y); }
+function pairKey(a,b) { return Math.min(a.id,b.id)+"-"+Math.max(a.id,b.id); }
 
 // =====================================================
 // LOGICAL COLLISION / OCCUPANCY
 // =====================================================
 
-function getGroupMemberOffsets(s) {
-  const forward = s.speedY >= 0 ? 1 : -1;
-
-  if (s.groupSize === 2) {
-    return [
-      { subOffset: 0, y: 0 },
-      { subOffset: 1, y: 0 }
-    ];
-  }
-
-  return [
-    { subOffset: 0, y: 0 },
-    { subOffset: 1, y: 0 },
-    { subOffset: 0, y: -forward * 24 }
-  ];
-}
-
 function getLogicalSwimmerParts(s) {
-  if (s.typeName !== "elderlyGroup") {
-    return [
-      {
-        globalSubLane: Math.round(s.globalSubLane),
-        y: s.y,
-        h: SWIMMER_SIZE
-      }
-    ];
+  if (!isWideGroupType(s)) {
+    if (s.typeName==="pregnantWoman") return [{ globalSubLane:Math.round(s.globalSubLane), y:s.y-6, h:SWIMMER_SIZE+12 }];
+    return [{ globalSubLane:Math.round(s.globalSubLane), y:s.y, h:SWIMMER_SIZE }];
   }
+  if (s.state!=="swimming") return [{ globalSubLane:Math.round(s.globalSubLane), y:s.y, h:SWIMMER_SIZE }];
+  return getGroupMemberOffsets(s).map(o=>({ globalSubLane:Math.round(s.globalSubLane+o.subOffset), y:s.y+o.y, h:SWIMMER_SIZE }));
+}
 
-  if (s.state !== "swimming") {
-    return [
-      {
-        globalSubLane: Math.round(s.globalSubLane),
-        y: s.y,
-        h: SWIMMER_SIZE
-      }
-    ];
-  }
+function swimmersShareLogicalSubLane(a,b) {
+  for (const ap of getLogicalSwimmerParts(a))
+    for (const bp of getLogicalSwimmerParts(b))
+      if (ap.globalSubLane===bp.globalSubLane) return true;
+  return false;
+}
 
-  const offsets = getGroupMemberOffsets(s);
+function swimmersCollideLogical(a,b) {
+  for (const ap of getLogicalSwimmerParts(a))
+    for (const bp of getLogicalSwimmerParts(b))
+      if (ap.globalSubLane===bp.globalSubLane && verticalOverlap(ap.y,ap.h,bp.y,bp.h)) return true;
+  return false;
+}
 
-  return offsets.map(o => {
-    return {
-      globalSubLane: Math.round(s.globalSubLane + o.subOffset),
-      y: s.y + o.y,
-      h: SWIMMER_SIZE
-    };
+function playerCollidesWithSwimmerLogical(plr,swimmer) {
+  if (swimmer.typeName==="underwaterSwimmer" && swimmer.isUnderwater) return false;
+  if (swimmer.typeName==="parachutist" && swimmer.state==="parachuting") return false;
+  const ps = Math.round(plr.globalSubLane);
+  for (const part of getLogicalSwimmerParts(swimmer))
+    if (part.globalSubLane===ps && verticalOverlap(plr.y,PLAYER_SIZE,part.y,part.h)) return true;
+  return false;
+}
+
+function countSwimmersInGlobalSubLane(globalSubLane,ignoreSwimmer) {
+  let count=0;
+  swimmers.forEach(s=>{
+    if (s===ignoreSwimmer||s.state!=="swimming") return;
+    getLogicalSwimmerParts(s).forEach(p=>{ if (p.globalSubLane===globalSubLane) count++; });
   });
-}
-
-function swimmersShareLogicalSubLane(a, b) {
-  const aParts = getLogicalSwimmerParts(a);
-  const bParts = getLogicalSwimmerParts(b);
-
-  for (const ap of aParts) {
-    for (const bp of bParts) {
-      if (ap.globalSubLane === bp.globalSubLane) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function swimmersCollideLogical(a, b) {
-  const aParts = getLogicalSwimmerParts(a);
-  const bParts = getLogicalSwimmerParts(b);
-
-  for (const ap of aParts) {
-    for (const bp of bParts) {
-      if (ap.globalSubLane !== bp.globalSubLane) continue;
-
-      if (verticalOverlap(ap.y, ap.h, bp.y, bp.h)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function playerCollidesWithSwimmerLogical(player, swimmer) {
-  const playerSubLane = Math.round(player.globalSubLane);
-  const parts = getLogicalSwimmerParts(swimmer);
-
-  for (const part of parts) {
-    if (part.globalSubLane !== playerSubLane) continue;
-
-    if (verticalOverlap(player.y, PLAYER_SIZE, part.y, part.h)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function chooseAdjacentGlobalSubLane(s) {
-  const options = [];
-
-  const currentSubLane = Math.round(s.globalSubLane);
-  const inside = subLaneInsideLane(currentSubLane);
-  const lane = s.lane;
-
-  if (inside > 0) {
-    options.push(globalSubLaneFromLaneAndSub(lane, inside - 1));
-  }
-
-  if (inside < getSubLanesPerLane() - 1) {
-    options.push(globalSubLaneFromLaneAndSub(lane, inside + 1));
-  }
-
-  if (options.length === 0) return currentSubLane;
-
-  return randomFromArray(options);
-}
-
-// =====================================================
-// SMART SUBLANE SELECTION AFTER REPEATED COLLISIONS
-// =====================================================
-
-function countSwimmersInGlobalSubLane(globalSubLane, ignoreSwimmer) {
-  let count = 0;
-
-  swimmers.forEach(s => {
-    if (s === ignoreSwimmer) return;
-    if (s.state !== "swimming") return;
-
-    const parts = getLogicalSwimmerParts(s);
-
-    parts.forEach(part => {
-      if (part.globalSubLane === globalSubLane) {
-        count++;
-      }
-    });
-  });
-
   return count;
 }
 
 function chooseLeastCrowdedSubLaneForSwimmer(s) {
-  const lane = s.lane;
-
-  if (s.typeName === "elderlyGroup") {
-    const candidates = [];
-
-    for (let sub = 0; sub < getSubLanesPerLane() - 1; sub++) {
-      const g1 = globalSubLaneFromLaneAndSub(lane, sub);
-      const g2 = globalSubLaneFromLaneAndSub(lane, sub + 1);
-
-      candidates.push({
-        globalSubLane: g1,
-        count: countSwimmersInGlobalSubLane(g1, s) + countSwimmersInGlobalSubLane(g2, s)
-      });
+  const lane=s.lane;
+  const needsTwo=isWideGroupType(s)&&s.type.groupLayout!=="column3";
+  if (needsTwo) {
+    const cands=[];
+    for (let sub=0;sub<getSubLanesPerLane()-1;sub++) {
+      const g1=globalSubLaneFromLaneAndSub(lane,sub), g2=globalSubLaneFromLaneAndSub(lane,sub+1);
+      cands.push({ globalSubLane:g1, count:countSwimmersInGlobalSubLane(g1,s)+countSwimmersInGlobalSubLane(g2,s) });
     }
-
-    candidates.sort((a, b) => {
-      if (a.count !== b.count) return a.count - b.count;
-      return Math.random() - 0.5;
-    });
-
-    return candidates[0].globalSubLane;
+    cands.sort((a,b)=>a.count-b.count||Math.random()-0.5);
+    return cands[0].globalSubLane;
   }
-
-  const candidates = [];
-
-  for (let sub = 0; sub < getSubLanesPerLane(); sub++) {
-    const g = globalSubLaneFromLaneAndSub(lane, sub);
-
-    candidates.push({
-      globalSubLane: g,
-      count: countSwimmersInGlobalSubLane(g, s)
-    });
+  const cands=[];
+  for (let sub=0;sub<getSubLanesPerLane();sub++) {
+    const g=globalSubLaneFromLaneAndSub(lane,sub);
+    cands.push({ globalSubLane:g, count:countSwimmersInGlobalSubLane(g,s) });
   }
-
-  candidates.sort((a, b) => {
-    if (a.count !== b.count) return a.count - b.count;
-    return Math.random() - 0.5;
-  });
-
-  return candidates[0].globalSubLane;
+  cands.sort((a,b)=>a.count-b.count||Math.random()-0.5);
+  return cands[0].globalSubLane;
 }
 
-function chooseSwimmerToMoveAfterRepeatedCollision(a, b) {
-  if (a.typeName === "elderlyGroup" && b.typeName !== "elderlyGroup") return b;
-  if (b.typeName === "elderlyGroup" && a.typeName !== "elderlyGroup") return a;
-
-  if (a.typeName === "unfriendlyCrawl" && b.typeName !== "unfriendlyCrawl") return b;
-  if (b.typeName === "unfriendlyCrawl" && a.typeName !== "unfriendlyCrawl") return a;
-
-  return Math.random() < 0.5 ? a : b;
+function chooseBestAvoidanceTarget(s,o) {
+  const lane=s.lane, currentSub=subLaneInsideLane(Math.round(s.globalSubLane)), numSubs=getSubLanesPerLane();
+  const headOn=o?isApproachingHeadOn(s,o):false;
+  if (isWideGroupType(s)) {
+    const cands=[];
+    for (let sub=0;sub<numSubs-1;sub++) {
+      const g1=globalSubLaneFromLaneAndSub(lane,sub), g2=globalSubLaneFromLaneAndSub(lane,sub+1);
+      cands.push({ globalSubLane:g1, count:countSwimmersInGlobalSubLane(g1,s)+countSwimmersInGlobalSubLane(g2,s) });
+    }
+    cands.sort((a,b)=>a.count-b.count||Math.random()-0.5);
+    return cands[0].globalSubLane;
+  }
+  const options=[];
+  for (let sub=0;sub<numSubs;sub++) {
+    if (sub===currentSub) continue;
+    const g=globalSubLaneFromLaneAndSub(lane,sub);
+    const count=countSwimmersInGlobalSubLane(g,s);
+    const dist=Math.abs(sub-currentSub);
+    let pref=0;
+    if (headOn) { const prefLeft=(s.id%2===0); if (prefLeft&&sub<currentSub) pref=-1; if (!prefLeft&&sub>currentSub) pref=-1; }
+    options.push({ globalSubLane:g, score:count*3+dist+pref });
+  }
+  if (!options.length) return Math.round(s.globalSubLane);
+  options.sort((a,b)=>a.score-b.score);
+  return options[0].globalSubLane;
 }
 
 function forceSwimmerToLeastCrowdedSubLane(s) {
-  const newGlobalSubLane = chooseLeastCrowdedSubLaneForSwimmer(s);
+  const newG=chooseLeastCrowdedSubLaneForSwimmer(s);
+  s.targetGlobalSubLane=newG; s.originalGlobalSubLane=newG;
+  if (isWideGroupType(s)) { s.globalSubLane=newG; s.x=xForSwimmerGlobalSubLane(s.globalSubLane); }
+  else { s.avoiding=true; s.avoidTimer=140; s.returnToLane=false; }
+}
 
-  s.targetGlobalSubLane = newGlobalSubLane;
-  s.originalGlobalSubLane = newGlobalSubLane;
-
-  if (s.typeName === "elderlyGroup") {
-    s.globalSubLane = newGlobalSubLane;
-    s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
-  } else {
-    s.avoiding = true;
-    s.avoidTimer = 140;
-    s.returnToLane = false;
-  }
+function chooseSwimmerToMoveAfterRepeatedCollision(a,b) {
+  if (a.typeName==="elderlyGroup"&&b.typeName!=="elderlyGroup") return b;
+  if (b.typeName==="elderlyGroup"&&a.typeName!=="elderlyGroup") return a;
+  if (a.typeName==="unfriendlyCrawl"&&b.typeName!=="unfriendlyCrawl") return b;
+  if (b.typeName==="unfriendlyCrawl"&&a.typeName!=="unfriendlyCrawl") return a;
+  return Math.random()<0.5?a:b;
 }
 
 // =====================================================
@@ -670,24 +360,13 @@ function forceSwimmerToLeastCrowdedSubLane(s) {
 // =====================================================
 
 function startDive() {
-  if (!player.swimming) return;
-  if (player.isDiving) return;
-  if (player.divesLeft <= 0) return;
-  if (player.penaltyTimer > 0) return;
-
-  player.isDiving = true;
-  player.diveTimer = DIVE_DURATION;
-  player.divesLeft--;
+  if (!player.swimming||player.isDiving||player.divesLeft<=0||player.penaltyTimer>0) return;
+  player.isDiving=true; player.diveTimer=DIVE_DURATION; player.divesLeft--;
 }
-
 function updateDive() {
   if (!player.isDiving) return;
-
   player.diveTimer--;
-
-  if (player.diveTimer <= 0) {
-    player.isDiving = false;
-  }
+  if (player.diveTimer<=0) player.isDiving=false;
 }
 
 // =====================================================
@@ -695,41 +374,22 @@ function updateDive() {
 // =====================================================
 
 function applyPlayerPenalty(pushBack) {
-  if (hitCooldown > 0) return;
-
-  hits++;
-  hitCooldown = 35;
-
-  player.penaltyTimer = player.penaltyDuration;
-
-  if (player.speedY > 0) {
-    player.speedY = player.minSpeed;
-  } else {
-    player.speedY = -player.minSpeed;
-  }
-
-  player.color = "orange";
-
+  if (hitCooldown>0) return;
+  hits++; hitCooldown=35;
+  player.penaltyTimer=player.penaltyDuration;
+  player.speedY=player.speedY>0?player.minSpeed:-player.minSpeed;
+  player.color="orange";
   if (pushBack) {
-    if (player.speedY < 0) {
-      player.y += 10;
-    } else {
-      player.y -= 10;
-    }
-
-    player.y = clamp(player.y, POOL_Y, POOL_Y + POOL_HEIGHT - PLAYER_SIZE);
+    player.y+=player.speedY<0?10:-10;
+    player.y=clamp(player.y,POOL_Y,POOL_Y+POOL_HEIGHT-PLAYER_SIZE);
   }
 }
 
 function applySwimmerPenalty(s) {
-  if (s.penaltyTimer > 0) return;
-
-  s.penaltyTimer = SWIMMER_PENALTY_DURATION;
-
-  const direction = s.speedY >= 0 ? 1 : -1;
-  const slowSpeed = Math.max(0.18, Math.abs(s.normalSpeed) * 0.25);
-
-  s.speedY = direction * slowSpeed;
+  if (s.penaltyTimer>0) return;
+  s.penaltyTimer=SWIMMER_PENALTY_DURATION;
+  const dir=s.speedY>=0?1:-1;
+  s.speedY=dir*Math.max(0.18,Math.abs(s.normalSpeed)*0.25);
 }
 
 // =====================================================
@@ -737,553 +397,452 @@ function applySwimmerPenalty(s) {
 // =====================================================
 
 function movePlayerHorizontal(direction) {
-
-  const newSubLane = player.globalSubLane + direction;
-
-  if (newSubLane < 0 || newSubLane >= getTotalSubLanes()) {
-    return;
-  }
-
-  // ✅ op rand mag je vrij wisselen
-  if (!player.swimming) {
-    player.globalSubLane = newSubLane;
-    player.x = xForGlobalSubLane(player.globalSubLane);
-    return;
-  }
-
-  // oude gedrag blijft voor in het water
-  const crossesLine = crossesMainLaneBoundary(player.globalSubLane, newSubLane);
-
-  if (crossesLine && !player.isDiving) {
-    applyPlayerPenalty(false);
-    return;
-  }
-
-  player.globalSubLane = newSubLane;
-  player.x = xForGlobalSubLane(player.globalSubLane);
+  const newSub=player.globalSubLane+direction;
+  if (newSub<0||newSub>=getTotalSubLanes()) return;
+  if (!player.swimming) { player.globalSubLane=newSub; player.x=xForGlobalSubLane(player.globalSubLane); return; }
+  if (crossesMainLaneBoundary(player.globalSubLane,newSub)&&!player.isDiving) { applyPlayerPenalty(false); return; }
+  player.globalSubLane=newSub; player.x=xForGlobalSubLane(player.globalSubLane);
 }
-
-
 
 // =====================================================
 // LANE SELECTION
 // =====================================================
 
-function lanePopulation(lane) {
-  return getLaneStats(lane).population;
-}
-
-function laneAverageSpeed(lane) {
-  return getLaneStats(lane).avgSpeed;
-}
-
-function laneAggression(lane) {
-  return getLaneStats(lane).aggression;
-}
-
 function chooseCalmestLane() {
-  const candidates = [];
-
-  for (let lane = 0; lane < LANE_COUNT; lane++) {
-    const stats = getLaneStats(lane);
-
-    candidates.push({
-      lane,
-      count: stats.population,
-      avgSpeed: stats.avgSpeed,
-      aggression: stats.aggression
-    });
+  const cands=[];
+  for (let lane=0;lane<LANE_COUNT;lane++) {
+    const s=getLaneStats(lane);
+    cands.push({ lane, count:s.population, avgSpeed:s.avgSpeed, aggression:s.aggression });
   }
-
-  candidates.sort((a, b) => {
-    if (a.count !== b.count) return a.count - b.count;
-    if (Math.abs(a.avgSpeed - b.avgSpeed) > 0.001) return a.avgSpeed - b.avgSpeed;
-    if (a.aggression !== b.aggression) return a.aggression - b.aggression;
-    return Math.random() - 0.5;
-  });
-
-  return candidates[0].lane;
+  cands.sort((a,b)=>{ if(a.count!==b.count)return a.count-b.count; if(Math.abs(a.avgSpeed-b.avgSpeed)>0.001)return a.avgSpeed-b.avgSpeed; if(a.aggression!==b.aggression)return a.aggression-b.aggression; return Math.random()-0.5; });
+  return cands[0].lane;
 }
 
 // =====================================================
 // PATHS
 // =====================================================
 
-function buildEntryPath(entryX, entryY) {
-  return [
-    { x: RIGHT_WALKWAY_X, y: GATE.y },
-    { x: RIGHT_WALKWAY_X, y: entryY },
-    { x: entryX, y: entryY }
-  ];
-}
-
-function buildExitPath(fromX, fromY) {
-  return [
-    { x: RIGHT_WALKWAY_X, y: fromY },
-    { x: RIGHT_WALKWAY_X, y: GATE.y },
-    { x: GATE.x, y: GATE.y }
-  ];
-}
+function buildEntryPath(ex,ey) { return [{ x:RIGHT_WALKWAY_X,y:GATE.y },{ x:RIGHT_WALKWAY_X,y:ey },{ x:ex,y:ey }]; }
+function buildExitPath(fx,fy)  { return [{ x:RIGHT_WALKWAY_X,y:fy },{ x:RIGHT_WALKWAY_X,y:GATE.y },{ x:GATE.x,y:GATE.y }]; }
 
 function updatePathFollower(s) {
-  if (!s.path || s.path.length === 0) return true;
-
-  const target = s.path[0];
-  const arrived = moveTowards(s, target.x, target.y, s.walkSpeed);
-
-  if (arrived) {
-    s.path.shift();
-  }
-
-  return s.path.length === 0;
-}
-
-function chooseEntryLadderForLane(lane) {
-  const wantRight = lane >= Math.floor(LANE_COUNT / 2);
-  const rightLadders = LADDERS.filter(l => l.side === "right");
-  const leftLadders = LADDERS.filter(l => l.side === "left");
-
-  return wantRight ? randomFromArray(rightLadders) : randomFromArray(leftLadders);
+  if (!s.path||!s.path.length) return true;
+  const t=s.path[0];
+  if (moveTowards(s,t.x,t.y,s.walkSpeed)) s.path.shift();
+  return s.path.length===0;
 }
 
 function buildElderlyEntryPath(ladder) {
-  const path = [];
+  return [
+    { x:RIGHT_WALKWAY_X, y:GATE.y },
+    { x:RIGHT_WALKWAY_X, y:ladder.y },
+    { x:ladder.side==="right"?POOL_X+POOL_WIDTH+DECK_MARGIN:POOL_X-DECK_MARGIN, y:ladder.y }
+  ];
+}
 
-  path.push({ x: RIGHT_WALKWAY_X, y: GATE.y });
-  path.push({ x: RIGHT_WALKWAY_X, y: ladder.y });
-
-  if (ladder.side === "right") {
-    path.push({ x: POOL_X + POOL_WIDTH + DECK_MARGIN, y: ladder.y });
-  } else {
-    path.push({ x: POOL_X - DECK_MARGIN, y: ladder.y });
-  }
-
-  return path;
+function chooseEntryLadderForLane(lane) {
+  const wantRight=lane>=Math.floor(LANE_COUNT/2);
+  const filtered=LADDERS.filter(l=>wantRight?l.side==="right":l.side==="left");
+  return randomFromArray(filtered.length?filtered:LADDERS);
 }
 
 // =====================================================
-// SWIMMER TYPES
+// BEHAVIOR FACTORIES
 // =====================================================
 
-function chooseBestAvoidanceTarget(s, o) {
-  const lane = s.lane;
-  const currentSub = subLaneInsideLane(Math.round(s.globalSubLane));
-  const numSubs = getSubLanesPerLane();
-  const headOn = o ? isApproachingHeadOn(s, o) : false;
-
-  // For elderly groups, need 2 adjacent free sub-lanes
-  if (s.typeName === "elderlyGroup") {
-    const candidates = [];
-    for (let sub = 0; sub < numSubs - 1; sub++) {
-      const g1 = globalSubLaneFromLaneAndSub(lane, sub);
-      const g2 = globalSubLaneFromLaneAndSub(lane, sub + 1);
-      candidates.push({
-        globalSubLane: g1,
-        count: countSwimmersInGlobalSubLane(g1, s) + countSwimmersInGlobalSubLane(g2, s)
-      });
-    }
-    candidates.sort((a, b) => a.count - b.count || Math.random() - 0.5);
-    return candidates[0].globalSubLane;
-  }
-
-  // Build candidate sub-lanes with scores
-  const options = [];
-  for (let sub = 0; sub < numSubs; sub++) {
-    if (sub === currentSub) continue;
-    const g = globalSubLaneFromLaneAndSub(lane, sub);
-    const count = countSwimmersInGlobalSubLane(g, s);
-    const dist = Math.abs(sub - currentSub);
-
-    // For head-on: use ID parity to send swimmers to opposite sides
-    // Even ID prefers lower sub-lane, odd ID prefers higher
-    let preferenceBonus = 0;
-    if (headOn) {
-      const prefersLeft = (s.id % 2 === 0);
-      if (prefersLeft && sub < currentSub) preferenceBonus = -1;
-      if (!prefersLeft && sub > currentSub) preferenceBonus = -1;
-    }
-
-    options.push({ globalSubLane: g, score: count * 3 + dist + preferenceBonus });
-  }
-
-  if (options.length === 0) return Math.round(s.globalSubLane);
-
-  options.sort((a, b) => a.score - b.score);
-  return options[0].globalSubLane;
+function makeDodgeBehavior(detRange,avTimer,headRange,headTimer) {
+  return function(s,others) {
+    others.forEach(o=>{
+      if (o===s||o.state!=="swimming") return;
+      if (!shouldAvoid(s,o)) return;
+      const headOn=isApproachingHeadOn(s,o);
+      const subDiff=Math.abs(Math.round(s.globalSubLane)-Math.round(o.globalSubLane));
+      const close=headOn?subDiff<=1:swimmersShareLogicalSubLane(s,o);
+      if (!close) return;
+      const dist=forwardDistance(s,o);
+      if (dist<(headOn?headRange:detRange)&&dist>12&&!s.avoiding) {
+        s.avoiding=true; s.avoidTimer=headOn?headTimer:avTimer;
+        s.targetGlobalSubLane=chooseBestAvoidanceTarget(s,o);
+        s.returnToLane=!headOn;
+      }
+    });
+  };
 }
 
-// Keep old name as alias for elder-specific call sites
-function chooseWideAvoidance(s, o) {
-  return chooseBestAvoidanceTarget(s, o);
-}
+function noDodge() {}
+
+// =====================================================
+// 30 SWIMMER TYPES
+// =====================================================
 
 const SWIMMER_TYPES = {
 
-  ordinary: {
-    label: "Gewone zwemmer",
-    color: "#35C759",
-    stripe: "white",
-    speedMin: 10,
-    speedMax: 25,
-    lanesMin: 20,
-    lanesMax: 30,
-
-    behavior: function(s, others) {
-      others.forEach(o => {
-        if (o === s) return;
-        if (o.state !== "swimming") return;
-        if (!shouldAvoid(s, o)) return;
-
-        const headOn = isApproachingHeadOn(s, o);
-        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
-
-        // Detect head-on from further away, also from adjacent sub-lanes
-        const laterallyClose = headOn ? subLaneDiff <= 1 : swimmersShareLogicalSubLane(s, o);
-        if (!laterallyClose) return;
-
-        const distance = forwardDistance(s, o);
-        const detectionRange = headOn ? 130 : 95;
-
-        if (distance < detectionRange && distance > 12 && !s.avoiding) {
-          s.avoiding = true;
-          s.avoidTimer = headOn ? 110 : 85;
-          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
-          // Don't snap back to original lane after head-on — causes oscillation
-          s.returnToLane = !headOn;
-        }
-      });
-    }
+  equalPace: {
+    label:"Gelijkmatige zwemmer", description:"Zwemt op jouw tempo. Oefenen maar!",
+    color:"#4CAF50", stripe:"white", speedMin:20, speedMax:28, lanesMin:15, lanesMax:25,
+    behavior:makeDodgeBehavior(90,85,120,100)
   },
-
-  slower: {
-    label: "Iets langzamere zwemmer",
-    color: "#1976D2",
-    stripe: "white",
-    speedMin: 5,
-    speedMax: 15,
-    lanesMin: 20,
-    lanesMax: 30,
-
-    behavior: function(s, others) {
-      others.forEach(o => {
-        if (o === s) return;
-        if (o.state !== "swimming") return;
-        if (!shouldAvoid(s, o)) return;
-
-        const headOn = isApproachingHeadOn(s, o);
-        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
-        const laterallyClose = headOn ? subLaneDiff <= 1 : swimmersShareLogicalSubLane(s, o);
-        if (!laterallyClose) return;
-
-        const distance = forwardDistance(s, o);
-        const detectionRange = headOn ? 110 : 60;
-
-        if (distance < detectionRange && distance > 10 && !s.avoiding && !s.stopped) {
-          if (!headOn) {
-            s.stopped = true;
-            s.stopTimer = 20;
-          }
-
-          s.avoiding = true;
-          s.avoidTimer = headOn ? 120 : 130;
-          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
-          s.returnToLane = !headOn;
-        }
-      });
-    }
+  slowLane: {
+    label:"Langzame baanzwemmer", description:"Heel rustig. Je loopt er snel op!",
+    color:"#1976D2", stripe:"white", speedMin:6, speedMax:12, lanesMin:20, lanesMax:30,
+    behavior:makeDodgeBehavior(55,120,90,130)
   },
-
+  fastLane: {
+    label:"Snelle baanzwemmer", description:"Raast door het water. Duik of wijk op tijd uit!",
+    color:"#FF5722", stripe:"white", speedMin:28, speedMax:36, lanesMin:12, lanesMax:22,
+    behavior:makeDodgeBehavior(100,80,140,100)
+  },
+  elderlyLoner: {
+    label:"Trage bejaarde", description:"Heeel langzaam en wijkt nooit uit. Geduld!",
+    color:"#7B1FA2", stripe:"white", speedMin:2, speedMax:5, lanesMin:25, lanesMax:40,
+    behavior:noDodge
+  },
   friendlyCrawl: {
-    label: "Vriendelijke borstcrawl",
-    color: "#00BCD4",
-    stripe: "black",
-    speedMin: 15,
-    speedMax: 25,
-    lanesMin: 30,
-    lanesMax: 40,
-
-    behavior: function(s, others) {
-      others.forEach(o => {
-        if (o === s) return;
-        if (o.state !== "swimming") return;
-        if (!shouldAvoid(s, o)) return;
-
-        const headOn = isApproachingHeadOn(s, o);
-        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
-        const laterallyClose = headOn ? subLaneDiff <= 1 : swimmersShareLogicalSubLane(s, o);
-        if (!laterallyClose) return;
-
-        const distance = forwardDistance(s, o);
-        const detectionRange = headOn ? 150 : 110;
-
-        if (distance < detectionRange && distance > 15 && !s.avoiding) {
-          s.avoiding = true;
-          s.avoidTimer = headOn ? 130 : 125;
-          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
-          s.returnToLane = !headOn && Math.random() < 0.5;
-        }
-      });
-    }
+    label:"Vriendelijke crawler", description:"Snel maar ze wijken netjes uit. Aardig!",
+    color:"#00BCD4", stripe:"black", speedMin:15, speedMax:25, lanesMin:30, lanesMax:40,
+    behavior:makeDodgeBehavior(110,125,150,130)
   },
-
   unfriendlyCrawl: {
-    label: "Niet-vriendelijke borstcrawl",
-    color: "#111111",
-    stripe: "white",
-    speedMin: 25,
-    speedMax: 30,
-    lanesMin: 40,
-    lanesMax: 50,
-
-    behavior: function(s, others) {
-      // Botst liever, maar wijkt minimaal uit voor frontale botsingen
-      others.forEach(o => {
-        if (o === s) return;
-        if (o.state !== "swimming") return;
-        if (!isApproachingHeadOn(s, o)) return;
-
-        const subLaneDiff = Math.abs(Math.round(s.globalSubLane) - Math.round(o.globalSubLane));
-        if (subLaneDiff > 0) return; // alleen als direct frontaal
-
-        const distance = forwardDistance(s, o);
-
-        if (distance < 50 && distance > 8 && !s.avoiding) {
-          s.avoiding = true;
-          s.avoidTimer = 70;
-          s.targetGlobalSubLane = chooseBestAvoidanceTarget(s, o);
-          s.returnToLane = false;
-        }
+    label:"Onvriendelijke crawler", description:"Snel en wijkt nauwelijks uit. Pas op!",
+    color:"#212121", stripe:"white", speedMin:25, speedMax:32, lanesMin:40, lanesMax:50,
+    behavior:function(s,others) {
+      others.forEach(o=>{
+        if (o===s||o.state!=="swimming"||!isApproachingHeadOn(s,o)) return;
+        if (Math.abs(Math.round(s.globalSubLane)-Math.round(o.globalSubLane))>0) return;
+        const dist=forwardDistance(s,o);
+        if (dist<40&&dist>8&&!s.avoiding) { s.avoiding=true; s.avoidTimer=60; s.targetGlobalSubLane=chooseBestAvoidanceTarget(s,o); s.returnToLane=false; }
       });
     }
   },
-
   elderlyGroup: {
-    label: "Bejaarden",
-    color: "#B06AD9",
-    stripe: "white",
-    speedMin: 3,
-    speedMax: 7,
-    lanesMin: 8,
-    lanesMax: 18,
-
-    behavior: function(s, others) {
-      // Bejaarden wijken niet uit.
+    label:"Groepje bejaarden", description:"Langzaam en 2 banen breed. Wijken NOOIT uit!",
+    color:"#B06AD9", stripe:"white", speedMin:3, speedMax:7, lanesMin:8, lanesMax:18,
+    groupLayout:"triangle", behavior:noDodge
+  },
+  playingKid: {
+    label:"Spelend kind", description:"Springt van subbaan naar subbaan. Onberekenbaar!",
+    color:"#FDD835", stripe:"black", speedMin:12, speedMax:22, lanesMin:15, lanesMax:25,
+    behavior:makeDodgeBehavior(60,70,90,80),
+    tick:function(s) {
+      if (!s.kidTimer) s.kidTimer=50+Math.random()*60;
+      if (--s.kidTimer<=0) { s.targetGlobalSubLane=randomGlobalSubLaneInLane(s.lane); s.kidTimer=40+Math.random()*70; }
+    }
+  },
+  backstroker: {
+    label:"Rugzwemmer", description:"Kan niet goed vooruit kijken. Reageert te laat!",
+    color:"#607D8B", stripe:"white", speedMin:10, speedMax:20, lanesMin:20, lanesMax:30,
+    behavior:makeDodgeBehavior(22,70,30,80)
+  },
+  bombJumper: {
+    label:"Bommetjesspringer", description:"Stopt soms om een enorme plons te maken. Wegwezen!",
+    color:"#FF6D00", stripe:"white", speedMin:10, speedMax:18, lanesMin:15, lanesMax:25,
+    behavior:makeDodgeBehavior(60,70,90,80),
+    tick:function(s) {
+      if (s.isBombing) {
+        if (--s.bombTimer<=0) { s.isBombing=false; s.speedY=s.normalSpeed*(s.fromTop?1:-1); }
+        return;
+      }
+      if (!s.nextBomb) s.nextBomb=200+Math.random()*200;
+      if (--s.nextBomb<=0) { s.isBombing=true; s.bombTimer=70; s.speedY=0; s.nextBomb=200+Math.random()*180; }
+    }
+  },
+  floatKid: {
+    label:"Kind op een vlot", description:"Drijft traag maar wisselt steeds van subbaan. Let op!",
+    color:"#26A69A", stripe:"black", speedMin:4, speedMax:9, lanesMin:20, lanesMax:35,
+    behavior:noDodge,
+    tick:function(s) {
+      if (!s.floatTimer) s.floatTimer=90+Math.random()*70;
+      if (--s.floatTimer<=0) { s.targetGlobalSubLane=randomGlobalSubLaneInLane(s.lane); s.floatTimer=80+Math.random()*80; }
+    }
+  },
+  underwaterSwimmer: {
+    label:"Onderwaterzwemmer", description:"Duikt onder! Onzichtbaar en ongrijpbaar... tot ze bovenkomen.",
+    color:"#0277BD", stripe:"white", speedMin:14, speedMax:22, lanesMin:15, lanesMax:25,
+    behavior:makeDodgeBehavior(80,80,110,90),
+    tick:function(s) {
+      if (s.isUnderwater) {
+        if (--s.underwaterTimer<=0) { s.isUnderwater=false; s.surfaceTimer=160+Math.random()*100; }
+        return;
+      }
+      if (!s.surfaceTimer) s.surfaceTimer=160+Math.random()*100;
+      if (--s.surfaceTimer<=0) { s.isUnderwater=true; s.underwaterTimer=80+Math.random()*60; }
+    }
+  },
+  snorkeler: {
+    label:"Snorkelaar", description:"Traag en stopt plotseling om te kijken. Irritant!",
+    color:"#8BC34A", stripe:"black", speedMin:5, speedMax:10, lanesMin:20, lanesMax:30,
+    behavior:makeDodgeBehavior(50,100,80,110),
+    tick:function(s) {
+      if (s.isSnorkeling) {
+        if (--s.snorkelTimer<=0) { s.isSnorkeling=false; s.stopped=false; s.snorkelNext=80+Math.random()*100; }
+        return;
+      }
+      if (!s.snorkelNext) s.snorkelNext=80+Math.random()*100;
+      if (--s.snorkelNext<=0) { s.isSnorkeling=true; s.snorkelTimer=35+Math.random()*55; s.stopped=true; s.stopTimer=s.snorkelTimer; }
+    }
+  },
+  triathlete: {
+    label:"Triatleet", description:"Extreem snel en wijkt NOOIT uit. Ga uit de weg!",
+    color:"#D32F2F", stripe:"white", speedMin:35, speedMax:45, lanesMin:10, lanesMax:18,
+    behavior:noDodge
+  },
+  lessonGroup: {
+    label:"Lesgroep", description:"Instructeur met leerlingen in een rij. Lange kolom!",
+    color:"#5C6BC0", stripe:"white", speedMin:10, speedMax:16, lanesMin:20, lanesMax:30,
+    groupLayout:"column3", behavior:noDodge
+  },
+  schoolClass: {
+    label:"Schoolklas", description:"Brede groep kinderen. Bezet bijna de hele baan!",
+    color:"#FFA726", stripe:"black", speedMin:8, speedMax:16, lanesMin:15, lanesMax:25,
+    groupLayout:"row3", behavior:noDodge
+  },
+  butterflyStroke: {
+    label:"Vlinderslagzwemmer", description:"Vlug en breed. Grote armzwaai — houd afstand!",
+    color:"#00ACC1", stripe:"black", speedMin:18, speedMax:28, lanesMin:20, lanesMax:30,
+    groupLayout:"row2", behavior:makeDodgeBehavior(90,90,120,100)
+  },
+  seniorFitness: {
+    label:"Seniorfitness groepje", description:"Langzaam duo. Zwemmen altijd naast elkaar.",
+    color:"#AB47BC", stripe:"white", speedMin:4, speedMax:9, lanesMin:20, lanesMax:30,
+    groupLayout:"row2", behavior:noDodge
+  },
+  synchroDuo: {
+    label:"Synchroonzwem duo", description:"Bewegen perfect gesynchroniseerd. Sierlijk maar hinderlijk.",
+    color:"#EC407A", stripe:"white", speedMin:12, speedMax:18, lanesMin:20, lanesMax:30,
+    groupLayout:"row2", behavior:makeDodgeBehavior(80,90,110,100)
+  },
+  waterPoloPlayer: {
+    label:"Waterpoloër", description:"Gooit ballen door de baan! Let op vliegende ballen!",
+    color:"#66BB6A", stripe:"black", speedMin:14, speedMax:20, lanesMin:15, lanesMax:25,
+    behavior:makeDodgeBehavior(80,80,110,90),
+    tick:function(s) {
+      if (!s.throwTimer) s.throwTimer=130+Math.random()*130;
+      if (--s.throwTimer<=0) {
+        const bSub=randomGlobalSubLaneInLane(s.lane);
+        const bY=s.y+(s.speedY>0?55:-55);
+        if (bY>POOL_Y&&bY<POOL_Y+POOL_HEIGHT) swimmers.push(createBall(bSub,s.lane,bY));
+        s.throwTimer=130+Math.random()*130;
+      }
+    }
+  },
+  ball: {
+    label:"Waterbal", description:"",
+    color:"#F06292", stripe:null, speedMin:0, speedMax:0, lanesMin:9999, lanesMax:9999,
+    behavior:noDodge
+  },
+  backstrokeDuo: {
+    label:"Rugcrawl duo", description:"Twee naast elkaar op de rug. Reageren heel laat!",
+    color:"#78909C", stripe:"white", speedMin:12, speedMax:18, lanesMin:20, lanesMax:30,
+    groupLayout:"row2", behavior:makeDodgeBehavior(20,70,28,75)
+  },
+  pregnantWoman: {
+    label:"Zwangere vrouw", description:"Heel traag en heeft extra ruimte nodig. Respecteer haar!",
+    color:"#FF8A65", stripe:"white", speedMin:3, speedMax:6, lanesMin:25, lanesMax:40,
+    behavior:makeDodgeBehavior(60,120,90,130)
+  },
+  rubberDinghy: {
+    label:"Rubberbootje", description:"Groot en traag. Drijft dwars door de banen.",
+    color:"#FFD54F", stripe:"black", speedMin:3, speedMax:7, lanesMin:20, lanesMax:35,
+    groupLayout:"row2", behavior:noDodge,
+    tick:function(s) {
+      if (!s.dinghyTimer) s.dinghyTimer=180+Math.random()*120;
+      if (--s.dinghyTimer<=0) { s.targetGlobalSubLane=randomElderlyStartSubLaneInLane(s.lane); s.dinghyTimer=180+Math.random()*120; }
+    }
+  },
+  sprintRacer: {
+    label:"Sprintraceer", description:"Flitst razendsnel door. Wisselt agressief van subbaan!",
+    color:"#E53935", stripe:"white", speedMin:38, speedMax:48, lanesMin:8, lanesMax:15,
+    behavior:function(s,others) {
+      others.forEach(o=>{
+        if (o===s||o.state!=="swimming") return;
+        const headOn=isApproachingHeadOn(s,o);
+        const subDiff=Math.abs(Math.round(s.globalSubLane)-Math.round(o.globalSubLane));
+        if (headOn&&subDiff>1) return;
+        if (!headOn&&!swimmersShareLogicalSubLane(s,o)) return;
+        const dist=forwardDistance(s,o);
+        if (dist<200&&!s.avoiding) { s.avoiding=true; s.avoidTimer=35; s.targetGlobalSubLane=chooseBestAvoidanceTarget(s,o); s.returnToLane=false; }
+      });
+    }
+  },
+  parachutist: {
+    label:"Parachutist", description:"Valt vanuit de lucht het bad in! Kom niet in de weg!",
+    color:"#43A047", stripe:"white", speedMin:14, speedMax:20, lanesMin:15, lanesMax:25,
+    behavior:makeDodgeBehavior(80,80,110,90)
+  },
+  dog: {
+    label:"Hond in het water", description:"Zigzagt alle kanten op. Totaal onberekenbaar!",
+    color:"#795548", stripe:"white", speedMin:10, speedMax:18, lanesMin:15, lanesMax:25,
+    behavior:noDodge,
+    tick:function(s) {
+      if (!s.dogTimer) s.dogTimer=18+Math.random()*30;
+      if (--s.dogTimer<=0) { s.targetGlobalSubLane=randomGlobalSubLaneInLane(s.lane); if(Math.random()<0.18) s.speedY=-s.speedY; s.dogTimer=18+Math.random()*30; }
+    }
+  },
+  waterBall: {
+    label:"Stuiterende waterbal", description:"Een grote bal stuitert door het bad. Moeilijk te ontwijken!",
+    color:"#F06292", stripe:"white", speedMin:8, speedMax:14, lanesMin:20, lanesMax:30,
+    behavior:noDodge,
+    tick:function(s) {
+      if (!s.bounceTimer) s.bounceTimer=50+Math.random()*60;
+      if (--s.bounceTimer<=0) { if(Math.random()<0.35) s.speedY=-s.speedY; s.targetGlobalSubLane=randomGlobalSubLaneInLane(s.lane); s.bounceTimer=50+Math.random()*60; }
+    }
+  },
+  olympian: {
+    label:"Olympische zwemmer", description:"Absolute snelheid. Wijkt voor niemand uit. Goed geluk!",
+    color:"#F9A825", stripe:"black", speedMin:45, speedMax:60, lanesMin:6, lanesMax:12,
+    behavior:noDodge
+  },
+  synchroTeam: {
+    label:"Synchroonzwem team", description:"Drie zwemmers naast elkaar in perfecte formatie!",
+    color:"#AD1457", stripe:"white", speedMin:8, speedMax:12, lanesMin:18, lanesMax:28,
+    groupLayout:"row3", behavior:noDodge
+  },
+  chaosSwimmer: {
+    label:"Chaoszwemmer", description:"Alles kan elk moment veranderen. Chaos troef!",
+    color:"#6A1B9A", stripe:"white", speedMin:5, speedMax:40, lanesMin:10, lanesMax:20,
+    behavior:noDodge,
+    tick:function(s) {
+      if (!s.chaosTimer) s.chaosTimer=55+Math.random()*65;
+      if (--s.chaosTimer<=0) {
+        const newSpeed=speedFromScale(5,40);
+        const dir=Math.random()<0.3?-Math.sign(s.speedY):Math.sign(s.speedY);
+        s.speedY=newSpeed*dir; s.normalSpeed=newSpeed;
+        s.targetGlobalSubLane=randomGlobalSubLaneInLane(s.lane);
+        s.chaosTimer=55+Math.random()*65;
+      }
     }
   }
 };
 
 // =====================================================
-// TYPE AVAILABILITY
+// LEVEL → SWIMMER INTRO MAP
 // =====================================================
 
+const LEVEL_SWIMMER_INTRO = {
+   1:"equalPace",    2:"slowLane",      3:"fastLane",      4:"elderlyLoner",
+   5:"friendlyCrawl",6:"unfriendlyCrawl",7:"elderlyGroup",  8:"playingKid",
+   9:"backstroker",  10:"bombJumper",   11:"floatKid",     12:"underwaterSwimmer",
+  13:"snorkeler",    14:"triathlete",   15:"lessonGroup",  16:"schoolClass",
+  17:"butterflyStroke",18:"seniorFitness",19:"synchroDuo", 20:"waterPoloPlayer",
+  21:"backstrokeDuo",22:"pregnantWoman",23:"rubberDinghy", 24:"sprintRacer",
+  25:"parachutist",  26:"dog",          27:"waterBall",    28:"olympian",
+  29:"synchroTeam",  30:"chaosSwimmer"
+};
+
+// =====================================================
+// TYPE AVAILABILITY (level-based pool)
+// =====================================================
+
+const NON_SPAWNABLE = new Set(["ball"]);
+
 function getAvailableSwimmerTypes() {
-  if (level < 4) {
-    return [
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "slower",
-      "elderlyGroup"
-    ];
+  const pool = [];
+  for (let l=1; l<=Math.min(level,MAX_LEVEL); l++) {
+    const tn = LEVEL_SWIMMER_INTRO[l];
+    if (!tn || NON_SPAWNABLE.has(tn)) continue;
+    const age = level - l;
+    const weight = age===0?5 : age===1?3 : age===2?2 : 1;
+    for (let w=0; w<weight; w++) pool.push(tn);
   }
+  return pool;
+}
 
-  if (level < 8) {
-    return [
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "slower",
-      "slower",
-      "elderlyGroup"
-    ];
-  }
+// =====================================================
+// BALL CREATION
+// =====================================================
 
-  if (level < 15) {
-    return [
-      "ordinary",
-      "ordinary",
-      "slower",
-      "friendlyCrawl",
-      "friendlyCrawl",
-      "elderlyGroup"
-    ];
-  }
-
-  return [
-    "ordinary",
-    "slower",
-    "friendlyCrawl",
-    "friendlyCrawl",
-    "unfriendlyCrawl",
-    "elderlyGroup"
-  ];
+function createBall(globalSubLane, lane, y) {
+  const bx = xForSwimmerGlobalSubLane(globalSubLane);
+  return {
+    id:nextSwimmerId++, typeName:"ball", type:SWIMMER_TYPES.ball, state:"swimming",
+    lane, globalSubLane, originalGlobalSubLane:globalSubLane, targetGlobalSubLane:globalSubLane,
+    baseX:bx, x:bx, y, jumpX:bx, jumpY:y, fromTop:true, path:[],
+    speedY:0, normalSpeed:0, walkSpeed:0,
+    avoiding:false, avoidTimer:0, returnToLane:false, wantsToReturn:false, returnCooldown:0,
+    stopped:false, stopTimer:0, lanesSwum:0, targetLanes:99999,
+    markedForExit:false, exitLadder:null, removeMe:false,
+    groupSize:1, entryLadder:null, enteringMember:0, enterTimer:0,
+    penaltyTimer:0, ballTimer:90
+  };
 }
 
 // =====================================================
 // CREATE SWIMMER
 // =====================================================
 
-function countElderly() {
-  return swimmers.filter(s => s.typeName === "elderlyGroup").length;
-}
-
-function laneHasElderly(lane) {
-  return swimmers.some(s =>
-    s.typeName === "elderlyGroup" &&
-    s.lane === lane &&
-    s.state !== "walkingOut"
-  );
-}
+function countElderly()    { return swimmers.filter(s=>s.typeName==="elderlyGroup").length; }
+function laneHasElderly(l) { return swimmers.some(s=>s.typeName==="elderlyGroup"&&s.lane===l&&s.state!=="walkingOut"); }
 
 function createSwimmer(randomPosition) {
   let typeNames = getAvailableSwimmerTypes();
-
-  // ✅ Level 1-9: max 5 bejaarden
-  if (level < 10 && countElderly() >= 5) {
-   typeNames = typeNames.filter(t => t !== "elderlyGroup");
-  }
-
+  if (level<10 && countElderly()>=5) typeNames=typeNames.filter(t=>t!=="elderlyGroup");
   const typeName = randomFromArray(typeNames);
   const type = SWIMMER_TYPES[typeName];
 
   let lane;
-
-  if (typeName === "elderlyGroup" && level < 10) {
-
-    // ✅ alleen lanes zonder bejaarden
-    const freeLanes = [];
-
-    for (let i = 0; i < LANE_COUNT; i++) {
-      if (!laneHasElderly(i)) {
-        freeLanes.push(i);
-      }
-    }
-
-    // fallback (zou zelden gebeuren)
-    if (freeLanes.length > 0) {
-      lane = randomFromArray(freeLanes);
-    } else {
-      lane = Math.floor(Math.random() * LANE_COUNT);
-    }
-
+  if (typeName==="elderlyGroup"&&level<10) {
+    const free=[]; for(let i=0;i<LANE_COUNT;i++) if(!laneHasElderly(i)) free.push(i);
+    lane=free.length?randomFromArray(free):Math.floor(Math.random()*LANE_COUNT);
   } else {
-    lane = randomPosition
-      ? Math.floor(Math.random() * LANE_COUNT)
-      : chooseCalmestLane();
+    lane=randomPosition?Math.floor(Math.random()*LANE_COUNT):chooseCalmestLane();
   }
 
-  let globalSubLane;
+  const isGroup=isWideGroupType({typeName});
+  const globalSubLane=isGroup?randomElderlyStartSubLaneInLane(lane):randomGlobalSubLaneInLane(lane);
+  const baseX=xForSwimmerGlobalSubLane(globalSubLane);
+  const fromTop=Math.random()<0.5, direction=fromTop?1:-1;
+  const speed=speedFromScale(type.speedMin,type.speedMax);
+  const targetLanes=type.lanesMin+Math.floor(Math.random()*(type.lanesMax-type.lanesMin+1));
 
-  if (typeName === "elderlyGroup") {
-    globalSubLane = randomElderlyStartSubLaneInLane(lane);
-  } else {
-    globalSubLane = randomGlobalSubLaneInLane(lane);
+  let x,y,state,path=[];
+  let entryLadder=null, groupSize=1;
+
+  if (typeName==="elderlyGroup") {
+    groupSize=Math.random()<0.65?2:3;
+    entryLadder=chooseEntryLadderForLane(lane);
+  } else if (typeName==="lessonGroup") {
+    groupSize=3;
+  } else if (typeName==="schoolClass"||typeName==="synchroTeam") {
+    groupSize=Math.min(3,getSubLanesPerLane());
+  } else if (isGroup) {
+    groupSize=2;
   }
 
-  const baseX = xForSwimmerGlobalSubLane(globalSubLane);
-
-  const fromTop = Math.random() < 0.5;
-  const direction = fromTop ? 1 : -1;
-
-  const speed = speedFromScale(type.speedMin, type.speedMax);
-
-  const targetLanes =
-    type.lanesMin + Math.floor(Math.random() * (type.lanesMax - type.lanesMin + 1));
-
-  let x;
-  let y;
-  let state;
-  let path = [];
-
-  const entryDeckY = fromTop ? TOP_WALKWAY_Y : BOTTOM_WALKWAY_Y;
-  const jumpX = baseX;
-  const jumpY = entryDeckY;
-
-  let entryLadder = null;
-  let groupSize = 1;
-  let enteringMember = 0;
-  let enterTimer = 0;
-
-  if (typeName === "elderlyGroup") {
-    groupSize = Math.random() < 0.65 ? 2 : 3;
-    entryLadder = chooseEntryLadderForLane(lane);
-
-    if (randomPosition) {
-      x = baseX;
-      y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
-      state = "swimming";
-    } else {
-      x = GATE.x;
-      y = GATE.y;
-      state = "goingToLadderToEnter";
-      path = buildElderlyEntryPath(entryLadder);
-    }
+  if (typeName==="parachutist") {
+    x=baseX; y=POOL_Y-70; state="parachuting";
+  } else if (typeName==="elderlyGroup") {
+    if (randomPosition) { x=baseX; y=POOL_Y+Math.random()*(POOL_HEIGHT-SWIMMER_SIZE); state="swimming"; }
+    else { x=GATE.x; y=GATE.y; state="goingToLadderToEnter"; path=buildElderlyEntryPath(entryLadder); }
   } else {
-    if (randomPosition) {
-      x = baseX;
-      y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
-      state = "swimming";
-    } else {
-      x = GATE.x;
-      y = GATE.y;
-      state = "walkingIn";
-      path = buildEntryPath(jumpX, jumpY);
-    }
+    if (randomPosition) { x=baseX; y=POOL_Y+Math.random()*(POOL_HEIGHT-SWIMMER_SIZE); state="swimming"; }
+    else { x=GATE.x; y=GATE.y; state="walkingIn"; path=buildEntryPath(baseX, fromTop?TOP_WALKWAY_Y:BOTTOM_WALKWAY_Y); }
   }
 
-  return {
-    id: nextSwimmerId++,
-
-    typeName,
-    type,
-
-    state,
-
-    lane,
-    globalSubLane,
-    originalGlobalSubLane: globalSubLane,
-    targetGlobalSubLane: globalSubLane,
-
-    baseX,
-    x,
-    y,
-
-    jumpX,
-    jumpY,
-    fromTop,
-
-    path,
-
-    speedY: speed * direction,
-    normalSpeed: speed,
-    walkSpeed: typeName === "elderlyGroup" ? 0.85 : 1.5,
-
-    avoiding: false,
-    avoidTimer: 0,
-    returnToLane: true,
-    wantsToReturn: false,
-    returnCooldown: 0,
-
-    stopped: false,
-    stopTimer: 0,
-
-    lanesSwum: 0,
-    targetLanes,
-
-    markedForExit: false,
-    exitLadder: null,
-    removeMe: false,
-
-    groupSize,
-    entryLadder,
-    enteringMember,
-    enterTimer,
-
-    penaltyTimer: 0
+  const s = {
+    id:nextSwimmerId++, typeName, type, state,
+    lane, globalSubLane, originalGlobalSubLane:globalSubLane, targetGlobalSubLane:globalSubLane,
+    baseX, x, y,
+    jumpX:baseX, jumpY:fromTop?TOP_WALKWAY_Y:BOTTOM_WALKWAY_Y, fromTop,
+    path, speedY:speed*direction, normalSpeed:speed,
+    walkSpeed:(typeName==="elderlyGroup"||typeName==="seniorFitness"||typeName==="lessonGroup")?0.85:1.5,
+    avoiding:false, avoidTimer:0, returnToLane:true, wantsToReturn:false, returnCooldown:0,
+    stopped:false, stopTimer:0, lanesSwum:0, targetLanes,
+    markedForExit:false, exitLadder:null, removeMe:false,
+    groupSize, entryLadder, enteringMember:0, enterTimer:0, penaltyTimer:0
   };
+
+  if (typeName==="bombJumper")        { s.isBombing=false; s.bombTimer=0; s.nextBomb=200+Math.random()*200; }
+  if (typeName==="underwaterSwimmer") { s.isUnderwater=false; s.underwaterTimer=0; s.surfaceTimer=160+Math.random()*100; }
+  if (typeName==="snorkeler")         { s.isSnorkeling=false; s.snorkelTimer=0; s.snorkelNext=80+Math.random()*100; }
+  if (typeName==="playingKid")        { s.kidTimer=50+Math.random()*60; }
+  if (typeName==="floatKid")          { s.floatTimer=90+Math.random()*70; }
+  if (typeName==="dog")               { s.dogTimer=18+Math.random()*30; }
+  if (typeName==="chaosSwimmer")      { s.chaosTimer=55+Math.random()*65; }
+  if (typeName==="waterPoloPlayer")   { s.throwTimer=130+Math.random()*130; }
+  if (typeName==="waterBall")         { s.bounceTimer=50+Math.random()*60; }
+  if (typeName==="rubberDinghy")      { s.dinghyTimer=180+Math.random()*120; }
+
+  return s;
 }
 
 // =====================================================
@@ -1291,13 +850,9 @@ function createSwimmer(randomPosition) {
 // =====================================================
 
 function populateInitialSwimmers() {
-  swimmers = [];
-
-  const count = getStartSwimmers();
-
-  for (let i = 0; i < count; i++) {
-    swimmers.push(createSwimmer(true));
-  }
+  swimmers=[];
+  const count=getStartSwimmers();
+  for (let i=0;i<count;i++) swimmers.push(createSwimmer(true));
 }
 
 populateInitialSwimmers();
@@ -1306,78 +861,23 @@ populateInitialSwimmers();
 // POPULATION SYSTEM
 // =====================================================
 
-function getOccupiedSubLanes() {
-  const occupied = new Set();
-
-  swimmers.forEach(s => {
-    if (s.state !== "swimming") return;
-
-    const parts = getLogicalSwimmerParts(s);
-    parts.forEach(p => {
-      occupied.add(p.globalSubLane);
-    });
-  });
-
-  return occupied.size;
-}
-
 function spawnPopulationEvent() {
-
   if (gameFinished) return;
-
-  const max = getMaxSwimmers();
-
-  // tel actieve zwemmers (niet degene die al weggaan)
-  const activeCount = swimmers.filter(s =>
-    s.state !== "walkingOut"
-  ).length;
-
-  // =========================
-  // ✅ GROEIFASE (onder max)
-  // =========================
-  if (activeCount < max) {
-
-    // ✅ altijd minstens 1 spawn
+  const max=getMaxSwimmers();
+  const activeCount=swimmers.filter(s=>s.state!=="walkingOut").length;
+  if (activeCount<max) {
     swimmers.push(createSwimmer(false));
-
-    // ✅ extra spawn als het nog leeg is (sneller opbouwen)
-    if (activeCount < max * 0.5) {
-      swimmers.push(createSwimmer(false));
-    }
-
-    // ✅ kleine kans op extra variatie
-    if (Math.random() < 0.3) {
-      swimmers.push(createSwimmer(false));
-    }
-  }
-
-  // =========================
-  // ✅ STABILISATIE (op max)
-  // =========================
-  else {
-
-    const candidates = swimmers.filter(
-      s => s.state === "swimming" && !s.markedForExit
-    );
-
-    if (candidates.length > Math.max(5, getStartSwimmers())) {
-
-      // ✅ kies iemand om rustig te laten vertrekken
-      const chosen = randomFromArray(candidates);
-      chosen.markedForExit = true;
-    }
+    if (activeCount<max*0.5) swimmers.push(createSwimmer(false));
+    if (Math.random()<0.3) swimmers.push(createSwimmer(false));
+  } else {
+    const cands=swimmers.filter(s=>s.state==="swimming"&&!s.markedForExit);
+    if (cands.length>Math.max(5,getStartSwimmers())) randomFromArray(cands).markedForExit=true;
   }
 }
 
 function scheduleNextPopulationEvent() {
-  const delay = 5000 + Math.random() * 5000;
-
-  setTimeout(() => {
-    if (!gameFinished) {
-      spawnPopulationEvent();
-      scheduleNextPopulationEvent();
-    }
-  }, delay);
+  const delay=5000+Math.random()*5000;
+  setTimeout(()=>{ if(!gameFinished){spawnPopulationEvent();scheduleNextPopulationEvent();} },delay);
 }
 
 scheduleNextPopulationEvent();
@@ -1387,181 +887,69 @@ scheduleNextPopulationEvent();
 // =====================================================
 
 function updatePlayer() {
-  player.x = xForGlobalSubLane(player.globalSubLane);
-
-  // ✅ STAAT OP RAND → nog niet zwemmen
-  if (!player.swimming) {
-    player.y = POOL_Y - 22; // blijft op rand
-    return;
-  }
-
+  player.x=xForGlobalSubLane(player.globalSubLane);
+  if (!player.swimming) { player.y=POOL_Y-22; return; }
   updateDive();
-
-  if (player.penaltyTimer > 0) {
-    player.penaltyTimer--;
+  if (player.penaltyTimer>0) player.penaltyTimer--;
+  player.y+=player.speedY;
+  if (player.y<POOL_Y) {
+    player.y=POOL_Y; player.speedY=Math.abs(player.baseSpeed);
+    lanesCompleted++; lanesThisLevel++; checkLevelProgress();
   }
-
-  player.y += player.speedY;
-
-  if (player.y < POOL_Y) {
-    player.y = POOL_Y;
-
-    player.speedY = Math.abs(player.baseSpeed);
-
-    lanesCompleted++;
-    lanesThisLevel++;
-    checkLevelProgress();
+  if (player.y>POOL_Y+POOL_HEIGHT-PLAYER_SIZE) {
+    player.y=POOL_Y+POOL_HEIGHT-PLAYER_SIZE; player.speedY=-Math.abs(player.baseSpeed);
+    lanesCompleted++; lanesThisLevel++; checkLevelProgress();
   }
-
-  if (player.y > POOL_Y + POOL_HEIGHT - PLAYER_SIZE) {
-    player.y = POOL_Y + POOL_HEIGHT - PLAYER_SIZE;
-
-    player.speedY = -Math.abs(player.baseSpeed);
-
-    lanesCompleted++;
-    lanesThisLevel++;
-    checkLevelProgress();
-  }
-
-  if (player.penaltyTimer > 0) {
-    player.color = "orange";
-  } else if (player.color === "orange") {
-    player.color = "blue";
-  }
+  if (player.penaltyTimer>0) player.color="orange";
+  else if (player.color==="orange") player.color="blue";
 }
 
 // =====================================================
 // ENTRY / EXIT LOGIC
 // =====================================================
 
-function updateWalkingIn(s) {
-  const arrived = updatePathFollower(s);
-
-  if (arrived) {
-    s.state = "waitingToJump";
-    s.jumpTimer = 18;
-  }
-}
-
+function updateWalkingIn(s)         { if (updatePathFollower(s)) { s.state="waitingToJump"; s.jumpTimer=18; } }
 function updateWaitingToJump(s) {
-  s.jumpTimer--;
-
-  if (s.jumpTimer <= 0) {
-    s.state = "swimming";
-    s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
-
-    if (s.fromTop) {
-      s.y = POOL_Y;
-      s.speedY = Math.abs(s.normalSpeed);
-    } else {
-      s.y = POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
-      s.speedY = -Math.abs(s.normalSpeed);
-    }
+  if (--s.jumpTimer<=0) {
+    s.state="swimming"; s.x=xForSwimmerGlobalSubLane(s.globalSubLane);
+    s.y=s.fromTop?POOL_Y:POOL_Y+POOL_HEIGHT-SWIMMER_SIZE;
+    s.speedY=s.fromTop?Math.abs(s.normalSpeed):-Math.abs(s.normalSpeed);
   }
 }
-
-function updateGoingToLadderToEnter(s) {
-  const arrived = updatePathFollower(s);
-
-  if (arrived) {
-    s.state = "enteringByLadder";
-    s.enterTimer = 45;
-    s.enteringMember = 0;
-  }
-}
-
+function updateGoingToLadderToEnter(s) { if (updatePathFollower(s)) { s.state="enteringByLadder"; s.enterTimer=45; s.enteringMember=0; } }
 function updateEnteringByLadder(s) {
   s.enterTimer--;
-
-  if (s.entryLadder.side === "left") {
-    s.x = POOL_X - 12;
-  } else {
-    s.x = POOL_X + POOL_WIDTH - 8;
-  }
-
-  s.y = s.entryLadder.y + s.enteringMember * 10;
-
-  if (s.enterTimer <= 0) {
+  s.x=s.entryLadder.side==="left"?POOL_X-12:POOL_X+POOL_WIDTH-8;
+  s.y=s.entryLadder.y+s.enteringMember*10;
+  if (s.enterTimer<=0) {
     s.enteringMember++;
-
-    if (s.enteringMember >= s.groupSize) {
-      s.state = "swimming";
-      s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
-      s.y = s.entryLadder.y;
-
-      if (s.entryLadder.y < POOL_Y + POOL_HEIGHT / 2) {
-        s.speedY = Math.abs(s.normalSpeed);
-      } else {
-        s.speedY = -Math.abs(s.normalSpeed);
-      }
-    } else {
-      s.enterTimer = 45;
-    }
+    if (s.enteringMember>=s.groupSize) {
+      s.state="swimming"; s.x=xForSwimmerGlobalSubLane(s.globalSubLane); s.y=s.entryLadder.y;
+      s.speedY=s.entryLadder.y<POOL_Y+POOL_HEIGHT/2?Math.abs(s.normalSpeed):-Math.abs(s.normalSpeed);
+    } else { s.enterTimer=45; }
   }
 }
 
 function nearestLadder(s) {
-  let best = LADDERS[0];
-  let bestDistance = Infinity;
-
-  LADDERS.forEach(l => {
-    const dx = l.x - s.x;
-    const dy = l.y - s.y;
-    const d = Math.sqrt(dx * dx + dy * dy);
-
-    if (d < bestDistance) {
-      best = l;
-      bestDistance = d;
-    }
-  });
-
+  let best=LADDERS[0], bestD=Infinity;
+  LADDERS.forEach(l=>{ const d=Math.sqrt((l.x-s.x)**2+(l.y-s.y)**2); if(d<bestD){best=l;bestD=d;} });
   return best;
 }
-
-function startExit(s) {
-  s.exitLadder = nearestLadder(s);
-  s.state = "goingToLadder";
-  s.targetGlobalSubLane = s.globalSubLane;
-}
-
+function startExit(s) { s.exitLadder=nearestLadder(s); s.state="goingToLadder"; s.targetGlobalSubLane=s.globalSubLane; }
 function updateGoingToLadder(s) {
-  const ladderWaterX =
-    s.exitLadder.side === "left"
-      ? POOL_X
-      : POOL_X + POOL_WIDTH - SWIMMER_SIZE;
-
-  const ladderWaterY = s.exitLadder.y;
-
-  const arrived = moveTowards(s, ladderWaterX, ladderWaterY, 1.2);
-
-  if (arrived) {
-    s.state = "climbingOut";
-    s.climbTimer = 24;
-  }
+  const lx=s.exitLadder.side==="left"?POOL_X:POOL_X+POOL_WIDTH-SWIMMER_SIZE;
+  if (moveTowards(s,lx,s.exitLadder.y,1.2)) { s.state="climbingOut"; s.climbTimer=24; }
 }
-
 function updateClimbingOut(s) {
-  s.climbTimer--;
-
-  if (s.climbTimer <= 0) {
-    if (s.exitLadder.side === "left") {
-      s.x = POOL_X - DECK_MARGIN;
-    } else {
-      s.x = POOL_X + POOL_WIDTH + DECK_MARGIN;
-    }
-
-    s.y = s.exitLadder.y;
-    s.path = buildExitPath(s.x, s.y);
-    s.state = "walkingOut";
+  if (--s.climbTimer<=0) {
+    s.x=s.exitLadder.side==="left"?POOL_X-DECK_MARGIN:POOL_X+POOL_WIDTH+DECK_MARGIN;
+    s.y=s.exitLadder.y; s.path=buildExitPath(s.x,s.y); s.state="walkingOut";
   }
 }
-
-function updateWalkingOut(s) {
-  const arrived = updatePathFollower(s);
-
-  if (arrived) {
-    s.removeMe = true;
-  }
+function updateWalkingOut(s) { if (updatePathFollower(s)) s.removeMe=true; }
+function updateParachuting(s) {
+  s.y+=1.8;
+  if (s.y>=POOL_Y) { s.state="swimming"; s.y=POOL_Y; s.speedY=Math.abs(s.normalSpeed); }
 }
 
 // =====================================================
@@ -1569,213 +957,108 @@ function updateWalkingOut(s) {
 // =====================================================
 
 function updateSwimmerBehavior() {
-  const activeSwimmers = getActiveSwimmers();
-
-  activeSwimmers.forEach(s => {
-    s.type.behavior(s, activeSwimmers);
-
-    // Tick down return-to-lane cooldown
-    if (s.returnCooldown > 0) s.returnCooldown--;
-
+  const active=getActiveSwimmers();
+  active.forEach(s=>{
+    s.type.behavior(s,active);
+    if (s.type.tick) s.type.tick(s);
+    if (s.returnCooldown>0) s.returnCooldown--;
     if (s.avoiding) {
-      s.avoidTimer--;
-
-      if (s.avoidTimer <= 0) {
-        s.avoiding = false;
-
-        if (s.returnToLane) {
-          // Only queue a return — we'll check below if it's actually safe
-          s.wantsToReturn = true;
-        }
-      }
+      if (--s.avoidTimer<=0) { s.avoiding=false; if(s.returnToLane) s.wantsToReturn=true; }
     }
-
-    // Return to original lane only when it's free and cooldown is done
-    if (!s.avoiding && s.wantsToReturn && s.typeName !== "elderlyGroup") {
-      if ((s.returnCooldown || 0) <= 0) {
-        const occupancy = countSwimmersInGlobalSubLane(s.originalGlobalSubLane, s);
-        if (occupancy === 0) {
-          s.targetGlobalSubLane = s.originalGlobalSubLane;
-          s.wantsToReturn = false;
-          s.returnCooldown = 45; // short cooldown after returning
-        }
-        // If original lane still busy, stay put and try again next frame
+    if (!s.avoiding&&s.wantsToReturn&&!isWideGroupType(s)) {
+      if ((s.returnCooldown||0)<=0&&countSwimmersInGlobalSubLane(s.originalGlobalSubLane,s)===0) {
+        s.targetGlobalSubLane=s.originalGlobalSubLane; s.wantsToReturn=false; s.returnCooldown=45;
       }
     }
   });
 }
 
 function updateSwimmerSpeedPenalty(s) {
-  if (s.penaltyTimer > 0) {
+  if (s.penaltyTimer>0) {
     s.penaltyTimer--;
-
-    const direction = s.speedY >= 0 ? 1 : -1;
-    const targetSpeed = Math.abs(s.normalSpeed);
-    let currentSpeed = Math.abs(s.speedY);
-
-    currentSpeed += 0.012;
-    currentSpeed = Math.min(currentSpeed, targetSpeed);
-
-    s.speedY = direction * currentSpeed;
+    const dir=s.speedY>=0?1:-1;
+    s.speedY=dir*Math.min(Math.abs(s.speedY)+0.012,Math.abs(s.normalSpeed));
   }
 }
 
 function updateSwimmerMovement() {
-  swimmers.forEach(s => {
-
-    if (s.state === "goingToLadderToEnter") {
-      updateGoingToLadderToEnter(s);
-      return;
-    }
-
-    if (s.state === "enteringByLadder") {
-      updateEnteringByLadder(s);
-      return;
-    }
-
-    if (s.state === "walkingIn") {
-      updateWalkingIn(s);
-      return;
-    }
-
-    if (s.state === "waitingToJump") {
-      updateWaitingToJump(s);
-      return;
-    }
-
-    if (s.state === "goingToLadder") {
-      updateGoingToLadder(s);
-      return;
-    }
-
-    if (s.state === "climbingOut") {
-      updateClimbingOut(s);
-      return;
-    }
-
-    if (s.state === "walkingOut") {
-      updateWalkingOut(s);
-      return;
-    }
-
-    if (s.state !== "swimming") return;
+  swimmers.forEach(s=>{
+    if (s.typeName==="ball")                 { if(--s.ballTimer<=0) s.removeMe=true; return; }
+    if (s.state==="parachuting")             { updateParachuting(s); return; }
+    if (s.state==="goingToLadderToEnter")    { updateGoingToLadderToEnter(s); return; }
+    if (s.state==="enteringByLadder")        { updateEnteringByLadder(s); return; }
+    if (s.state==="walkingIn")               { updateWalkingIn(s); return; }
+    if (s.state==="waitingToJump")           { updateWaitingToJump(s); return; }
+    if (s.state==="goingToLadder")           { updateGoingToLadder(s); return; }
+    if (s.state==="climbingOut")             { updateClimbingOut(s); return; }
+    if (s.state==="walkingOut")              { updateWalkingOut(s); return; }
+    if (s.state!=="swimming") return;
 
     updateSwimmerSpeedPenalty(s);
+    if (s.typeName==="bombJumper"&&s.isBombing) return;
 
-    if (s.stopped) {
-      s.stopTimer--;
+    if (s.stopped) { if(--s.stopTimer<=0) s.stopped=false; }
+    else { s.y+=s.speedY; }
 
-      if (s.stopTimer <= 0) {
-        s.stopped = false;
-      }
+    if (s.y<POOL_Y) {
+      s.y=POOL_Y;
+      if (s.markedForExit||s.lanesSwum>=s.targetLanes) { startExit(s); return; }
+      s.speedY=Math.abs(s.speedY); s.lanesSwum++;
+    }
+    if (s.y>POOL_Y+POOL_HEIGHT-SWIMMER_SIZE) {
+      s.y=POOL_Y+POOL_HEIGHT-SWIMMER_SIZE;
+      if (s.markedForExit||s.lanesSwum>=s.targetLanes) { startExit(s); return; }
+      s.speedY=-Math.abs(s.speedY); s.lanesSwum++;
+    }
+
+    const isGroup=isWideGroupType(s);
+    if (!isGroup) {
+      s.globalSubLane+=(s.targetGlobalSubLane-s.globalSubLane)*0.15;
+      s.globalSubLane=clamp(s.globalSubLane,globalSubLaneFromLaneAndSub(s.lane,0),globalSubLaneFromLaneAndSub(s.lane,getSubLanesPerLane()-1));
     } else {
-      s.y += s.speedY;
+      const layoutSlots=s.type.groupLayout==="row3"?3:s.type.groupLayout==="column3"?1:2;
+      s.globalSubLane+=(s.targetGlobalSubLane-s.globalSubLane)*0.12;
+      s.globalSubLane=clamp(s.globalSubLane,globalSubLaneFromLaneAndSub(s.lane,0),globalSubLaneFromLaneAndSub(s.lane,getSubLanesPerLane()-layoutSlots));
     }
-
-    if (s.y < POOL_Y) {
-      s.y = POOL_Y;
-
-      if (s.markedForExit || s.lanesSwum >= s.targetLanes) {
-        startExit(s);
-        return;
-      }
-
-      s.speedY = Math.abs(s.speedY);
-      s.lanesSwum++;
-    }
-
-    if (s.y > POOL_Y + POOL_HEIGHT - SWIMMER_SIZE) {
-      s.y = POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
-
-      if (s.markedForExit || s.lanesSwum >= s.targetLanes) {
-        startExit(s);
-        return;
-      }
-
-      s.speedY = -Math.abs(s.speedY);
-      s.lanesSwum++;
-    }
-
-    if (s.typeName !== "elderlyGroup") {
-      s.globalSubLane += (s.targetGlobalSubLane - s.globalSubLane) * 0.15;
-
-      const minGlobal = globalSubLaneFromLaneAndSub(s.lane, 0);
-      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, getSubLanesPerLane() - 1);
-
-      s.globalSubLane = clamp(s.globalSubLane, minGlobal, maxGlobal);
-      s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
-    } else {
-      const minGlobal = globalSubLaneFromLaneAndSub(s.lane, 0);
-      const maxGlobal = globalSubLaneFromLaneAndSub(s.lane, getSubLanesPerLane() - 2);
-
-      s.globalSubLane = clamp(s.globalSubLane, minGlobal, maxGlobal);
-      s.x = xForSwimmerGlobalSubLane(s.globalSubLane);
-    }
+    s.x=xForSwimmerGlobalSubLane(s.globalSubLane);
   });
 
-  swimmers = swimmers.filter(s => !s.removeMe);
+  swimmers=swimmers.filter(s=>!s.removeMe);
 }
 
-function updateSwimmers() {
-  updateSwimmerBehavior();
-  updateSwimmerMovement();
-}
+function updateSwimmers() { updateSwimmerBehavior(); updateSwimmerMovement(); }
 
 // =====================================================
 // SWIMMER COLLISIONS
 // =====================================================
 
 function updatePairCollisionCooldowns() {
-  Object.keys(pairCollisionCooldowns).forEach(key => {
-    pairCollisionCooldowns[key]--;
-
-    if (pairCollisionCooldowns[key] <= 0) {
-      delete pairCollisionCooldowns[key];
-    }
+  Object.keys(pairCollisionCooldowns).forEach(key=>{
+    if(--pairCollisionCooldowns[key]<=0) delete pairCollisionCooldowns[key];
   });
 }
 
 function updateSwimmerCollisions() {
   updatePairCollisionCooldowns();
-
-  const activeSwimmers = getActiveSwimmers();
-
-  for (let i = 0; i < activeSwimmers.length; i++) {
-    const a = activeSwimmers[i];
-
-    for (let j = i + 1; j < activeSwimmers.length; j++) {
-      const b = activeSwimmers[j];
-
-      if (!swimmersCollideLogical(a, b)) continue;
-
-      const key = pairKey(a, b);
-
-      applySwimmerPenalty(a);
-      applySwimmerPenalty(b);
-
+  const active=getActiveSwimmers();
+  for (let i=0;i<active.length;i++) {
+    const a=active[i];
+    for (let j=i+1;j<active.length;j++) {
+      const b=active[j];
+      if (!swimmersCollideLogical(a,b)) continue;
+      const key=pairKey(a,b);
+      applySwimmerPenalty(a); applySwimmerPenalty(b);
       if (!pairCollisionCooldowns[key]) {
-        pairCollisionCounts[key] = (pairCollisionCounts[key] || 0) + 1;
-        pairCollisionCooldowns[key] = PAIR_COLLISION_COOLDOWN;
-
-        if (pairCollisionCounts[key] > PAIR_COLLISION_LIMIT) {
-          const swimmerToMove = chooseSwimmerToMoveAfterRepeatedCollision(a, b);
-          forceSwimmerToLeastCrowdedSubLane(swimmerToMove);
-
-          pairCollisionCounts[key] = 0;
-          pairCollisionCooldowns[key] = PAIR_COLLISION_COOLDOWN;
+        pairCollisionCounts[key]=(pairCollisionCounts[key]||0)+1;
+        pairCollisionCooldowns[key]=PAIR_COLLISION_COOLDOWN;
+        if (pairCollisionCounts[key]>PAIR_COLLISION_LIMIT) {
+          forceSwimmerToLeastCrowdedSubLane(chooseSwimmerToMoveAfterRepeatedCollision(a,b));
+          pairCollisionCounts[key]=0; pairCollisionCooldowns[key]=PAIR_COLLISION_COOLDOWN;
         }
       }
-
-      if (a.y < b.y) {
-        a.y -= 3;
-        b.y += 3;
-      } else {
-        a.y += 3;
-        b.y -= 3;
-      }
-
-      a.y = clamp(a.y, POOL_Y, POOL_Y + POOL_HEIGHT - SWIMMER_SIZE);
-      b.y = clamp(b.y, POOL_Y, POOL_Y + POOL_HEIGHT - SWIMMER_SIZE);
+      if (a.y<b.y) { a.y-=3; b.y+=3; } else { a.y+=3; b.y-=3; }
+      a.y=clamp(a.y,POOL_Y,POOL_Y+POOL_HEIGHT-SWIMMER_SIZE);
+      b.y=clamp(b.y,POOL_Y,POOL_Y+POOL_HEIGHT-SWIMMER_SIZE);
     }
   }
 }
@@ -1784,19 +1067,18 @@ function updateSwimmerCollisions() {
 // PLAYER COLLISIONS
 // =====================================================
 
-
 function updatePlayerCollisions() {
   if (!player.swimming) return;
-
-  if (hitCooldown > 0) hitCooldown--;
-
+  if (hitCooldown>0) hitCooldown--;
   if (player.isDiving) return;
 
-  swimmers.forEach(s => {
-    if (s.state !== "swimming") return;
-
-    if (playerCollidesWithSwimmerLogical(player, s)) {
-      applyPlayerPenalty(true);
+  swimmers.forEach(s=>{
+    if (s.state!=="swimming"&&s.state!=="parachuting") return;
+    if (playerCollidesWithSwimmerLogical(player,s)) applyPlayerPenalty(true);
+    // Bomb splash zone
+    if (s.typeName==="bombJumper"&&s.isBombing) {
+      const pSub=Math.round(player.globalSubLane), sSub=Math.round(s.globalSubLane);
+      if (Math.abs(pSub-sSub)<=1&&Math.abs(player.y-s.y)<35) applyPlayerPenalty(true);
     }
   });
 }
@@ -1807,11 +1089,7 @@ function updatePlayerCollisions() {
 
 function update() {
   updateOverlay();
-
-  if (gamePaused || gameFinished) {
-    return;
-  }
-
+  if (gamePaused||gameFinished) return;
   updatePlayer();
   updateSwimmers();
   updateSwimmerCollisions();
@@ -1823,457 +1101,243 @@ function update() {
 // =====================================================
 
 function drawDeck() {
-  ctx.fillStyle = "#e8d4a2";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.strokeStyle = "#d2bd86";
-  ctx.lineWidth = 1;
-
-  for (let y = 0; y < canvas.height; y += 28) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(canvas.width, y);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = "#8D6E63";
-  ctx.fillRect(GATE.x - 30, GATE.y - 35, 60, 70);
-
-  ctx.fillStyle = "white";
-  ctx.font = "12px monospace";
-  ctx.fillText("KASSA", GATE.x - 20, GATE.y + 4);
-
-  ctx.strokeStyle = "rgba(120,90,50,0.35)";
-  ctx.lineWidth = 3;
-
-  ctx.beginPath();
-  ctx.moveTo(RIGHT_WALKWAY_X, TOP_WALKWAY_Y);
-  ctx.lineTo(RIGHT_WALKWAY_X, BOTTOM_WALKWAY_Y);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(POOL_X, TOP_WALKWAY_Y);
-  ctx.lineTo(RIGHT_WALKWAY_X, TOP_WALKWAY_Y);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(POOL_X, BOTTOM_WALKWAY_Y);
-  ctx.lineTo(RIGHT_WALKWAY_X, BOTTOM_WALKWAY_Y);
-  ctx.stroke();
+  ctx.fillStyle="#e8d4a2"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle="#d2bd86"; ctx.lineWidth=1;
+  for (let y=0;y<canvas.height;y+=28) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+  ctx.fillStyle="#8D6E63"; ctx.fillRect(GATE.x-30,GATE.y-35,60,70);
+  ctx.fillStyle="white"; ctx.font="12px monospace"; ctx.fillText("KASSA",GATE.x-20,GATE.y+4);
+  ctx.strokeStyle="rgba(120,90,50,0.35)"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(RIGHT_WALKWAY_X,TOP_WALKWAY_Y); ctx.lineTo(RIGHT_WALKWAY_X,BOTTOM_WALKWAY_Y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(POOL_X,TOP_WALKWAY_Y); ctx.lineTo(RIGHT_WALKWAY_X,TOP_WALKWAY_Y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(POOL_X,BOTTOM_WALKWAY_Y); ctx.lineTo(RIGHT_WALKWAY_X,BOTTOM_WALKWAY_Y); ctx.stroke();
 }
 
 function drawPool() {
-  ctx.fillStyle = "#f7f7f7";
-  ctx.fillRect(
-    POOL_X - 24,
-    POOL_Y - 24,
-    POOL_WIDTH + 48,
-    POOL_HEIGHT + 48
-  );
-
-  ctx.strokeStyle = "#888";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(
-    POOL_X - 24,
-    POOL_Y - 24,
-    POOL_WIDTH + 48,
-    POOL_HEIGHT + 48
-  );
-
-  ctx.fillStyle = "#4FC3F7";
-  ctx.fillRect(POOL_X, POOL_Y, POOL_WIDTH, POOL_HEIGHT);
-
-  ctx.strokeStyle = "rgba(255,255,255,0.28)";
-  ctx.lineWidth = 1;
-
-  for (let i = 1; i < getTotalSubLanes(); i++) {
-    if (i % getSubLanesPerLane() === 0) continue;
-
-    ctx.beginPath();
-    ctx.moveTo(POOL_X + i * getSubLaneWidth(), POOL_Y);
-    ctx.lineTo(POOL_X + i * getSubLaneWidth(), POOL_Y + POOL_HEIGHT);
-    ctx.stroke();
+  ctx.fillStyle="#f7f7f7"; ctx.fillRect(POOL_X-24,POOL_Y-24,POOL_WIDTH+48,POOL_HEIGHT+48);
+  ctx.strokeStyle="#888"; ctx.lineWidth=4; ctx.strokeRect(POOL_X-24,POOL_Y-24,POOL_WIDTH+48,POOL_HEIGHT+48);
+  ctx.fillStyle="#4FC3F7"; ctx.fillRect(POOL_X,POOL_Y,POOL_WIDTH,POOL_HEIGHT);
+  ctx.strokeStyle="rgba(255,255,255,0.28)"; ctx.lineWidth=1;
+  for (let i=1;i<getTotalSubLanes();i++) {
+    if (i%getSubLanesPerLane()===0) continue;
+    ctx.beginPath(); ctx.moveTo(POOL_X+i*getSubLaneWidth(),POOL_Y); ctx.lineTo(POOL_X+i*getSubLaneWidth(),POOL_Y+POOL_HEIGHT); ctx.stroke();
   }
-
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 4;
-
-  for (let i = 1; i < LANE_COUNT; i++) {
-    ctx.beginPath();
-    ctx.moveTo(POOL_X + i * LANE_WIDTH, POOL_Y);
-    ctx.lineTo(POOL_X + i * LANE_WIDTH, POOL_Y + POOL_HEIGHT);
-    ctx.stroke();
+  ctx.strokeStyle="white"; ctx.lineWidth=4;
+  for (let i=1;i<LANE_COUNT;i++) {
+    ctx.beginPath(); ctx.moveTo(POOL_X+i*LANE_WIDTH,POOL_Y); ctx.lineTo(POOL_X+i*LANE_WIDTH,POOL_Y+POOL_HEIGHT); ctx.stroke();
   }
-
-  ctx.strokeStyle = "#0277BD";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(POOL_X, POOL_Y, POOL_WIDTH, POOL_HEIGHT);
+  ctx.strokeStyle="#0277BD"; ctx.lineWidth=4; ctx.strokeRect(POOL_X,POOL_Y,POOL_WIDTH,POOL_HEIGHT);
 }
 
 function drawLadders() {
-  LADDERS.forEach(l => {
-
-    ctx.strokeStyle = "#444";
-    ctx.lineWidth = 3;
-
-    // horizontale richting (boven/onder)
-    ctx.beginPath();
-    ctx.moveTo(l.x - 10, l.y);
-    ctx.lineTo(l.x + 10, l.y);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(l.x - 10, l.y + 6);
-    ctx.lineTo(l.x + 10, l.y + 6);
-    ctx.stroke();
-
+  LADDERS.forEach(l=>{
+    ctx.strokeStyle="#444"; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(l.x-10,l.y); ctx.lineTo(l.x+10,l.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(l.x-10,l.y+6); ctx.lineTo(l.x+10,l.y+6); ctx.stroke();
   });
 }
 
-function drawSingleSwimmerBlock(x, y, s, headDirection) {
-  if (s.penaltyTimer > 0) {
-    ctx.fillStyle = "#ff9800";
-  } else {
-    ctx.fillStyle = s.type.color;
-  }
-
-  ctx.fillRect(x, y, SWIMMER_SIZE, SWIMMER_SIZE);
-
-  ctx.fillStyle = "black";
-
-  if (headDirection < 0) {
-    ctx.fillRect(x + 4, y - 4, 6, 4);
-  } else {
-    ctx.fillRect(x + 4, y + SWIMMER_SIZE, 6, 4);
-  }
-
-  ctx.fillStyle = s.type.stripe;
-  ctx.fillRect(x + 2, y + 6, 10, 3);
+function drawSingleSwimmerBlock(x,y,s,headDir) {
+  ctx.fillStyle=s.penaltyTimer>0?"#ff9800":s.type.color;
+  ctx.fillRect(x,y,SWIMMER_SIZE,SWIMMER_SIZE);
+  ctx.fillStyle="black";
+  if (headDir<0) ctx.fillRect(x+4,y-4,6,4); else ctx.fillRect(x+4,y+SWIMMER_SIZE,6,4);
+  if (s.type.stripe) { ctx.fillStyle=s.type.stripe; ctx.fillRect(x+2,y+6,10,3); }
 }
 
-function drawElderlyGroup(s) {
-  if (s.state === "goingToLadderToEnter") {
-    for (let i = 0; i < s.groupSize; i++) {
-      drawSingleSwimmerBlock(s.x - i * 12, s.y + i * 10, s, 1);
-    }
-    return;
+function drawGroupSwimmer(s) {
+  if (s.state==="goingToLadderToEnter") {
+    for(let i=0;i<s.groupSize;i++) drawSingleSwimmerBlock(s.x-i*12,s.y+i*10,s,1); return;
   }
-
-  if (s.state === "enteringByLadder") {
-    for (let i = 0; i < s.groupSize; i++) {
-      let alpha = i <= s.enteringMember ? 1 : 0.45;
-      ctx.globalAlpha = alpha;
-
-      const offset = i * 12;
-      drawSingleSwimmerBlock(s.x, s.y + offset, s, 1);
-    }
-
-    ctx.globalAlpha = 1;
-    return;
+  if (s.state==="enteringByLadder") {
+    for(let i=0;i<s.groupSize;i++) { ctx.globalAlpha=i<=s.enteringMember?1:0.45; drawSingleSwimmerBlock(s.x,s.y+i*12,s,1); }
+    ctx.globalAlpha=1; return;
   }
+  if (s.state!=="swimming") { drawSingleSwimmerBlock(s.x,s.y,s,1); return; }
 
-  if (s.state !== "swimming") {
-    drawSingleSwimmerBlock(s.x, s.y, s, 1);
-    return;
-  }
-
-  const offsets = getGroupMemberOffsets(s);
-
-  offsets.forEach(o => {
-    const global = Math.round(s.globalSubLane + o.subOffset);
-    const x = xForSwimmerGlobalSubLane(global);
-    const y = s.y + o.y;
-
-    drawSingleSwimmerBlock(x, y, s, s.speedY);
+  getGroupMemberOffsets(s).forEach(o=>{
+    const gx=xForSwimmerGlobalSubLane(Math.round(s.globalSubLane+o.subOffset));
+    drawSingleSwimmerBlock(gx,s.y+o.y,s,s.speedY);
   });
+  ctx.strokeStyle="rgba(255,255,255,0.7)"; ctx.lineWidth=1;
+  if (s.type.groupLayout==="column3") {
+    const fwd=s.speedY>=0?1:-1;
+    ctx.strokeRect(s.x-2,s.y-fwd*52-2,SWIMMER_SIZE+4,52+SWIMMER_SIZE+4);
+  } else {
+    const slots=s.type.groupLayout==="row3"?3:2;
+    ctx.strokeRect(xForSwimmerGlobalSubLane(Math.round(s.globalSubLane))-2,s.y-2,getSubLaneWidth()*slots+8,SWIMMER_SIZE+4);
+  }
+}
 
-  ctx.strokeStyle = "rgba(255,255,255,0.8)";
-  ctx.lineWidth = 1;
+function drawBall(s) {
+  ctx.fillStyle="#F06292"; ctx.beginPath(); ctx.arc(s.x+7,s.y+7,8,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle="white"; ctx.lineWidth=1.5; ctx.stroke();
+}
 
-  const leftX = xForSwimmerGlobalSubLane(Math.round(s.globalSubLane)) - 2;
-  ctx.strokeRect(leftX, s.y - 28, getSubLaneWidth() * 2 + 8, 72);
+function drawParachutistSwimmer(s) {
+  ctx.fillStyle=s.type.color;
+  ctx.beginPath(); ctx.arc(s.x+SWIMMER_SIZE/2,s.y-14,16,Math.PI,0); ctx.fill();
+  ctx.strokeStyle="rgba(0,0,0,0.3)"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(s.x,s.y-14); ctx.lineTo(s.x+4,s.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s.x+SWIMMER_SIZE,s.y-14); ctx.lineTo(s.x+10,s.y); ctx.stroke();
+  drawSingleSwimmerBlock(s.x,s.y,s,1);
+}
+
+function drawBombSplash(s) {
+  const progress=1-s.bombTimer/70, radius=8+progress*28;
+  ctx.globalAlpha=0.7-progress*0.5;
+  ctx.fillStyle="#FF6D00"; ctx.beginPath(); ctx.arc(s.x+SWIMMER_SIZE/2,s.y+SWIMMER_SIZE/2,radius,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+  drawSingleSwimmerBlock(s.x,s.y,s,s.speedY);
 }
 
 function drawSwimmer(s) {
-  if (s.typeName === "elderlyGroup") {
-    drawElderlyGroup(s);
+  if (s.typeName==="ball") { drawBall(s); return; }
+  if (isWideGroupType(s)) { drawGroupSwimmer(s); return; }
+  if (s.typeName==="parachutist"&&s.state==="parachuting") { drawParachutistSwimmer(s); return; }
+  if (s.typeName==="bombJumper"&&s.isBombing) { drawBombSplash(s); return; }
+  if (s.typeName==="underwaterSwimmer"&&s.isUnderwater) {
+    ctx.globalAlpha=0.12; drawSingleSwimmerBlock(s.x,s.y,s,s.speedY); ctx.globalAlpha=1; return;
+  }
+  if (s.state==="walkingIn"||s.state==="walkingOut"||s.state==="goingToLadder"||s.state==="climbingOut"||s.state==="waitingToJump") {
+    drawSingleSwimmerBlock(s.x,s.y,s,1);
+    if (s.state==="waitingToJump") { ctx.strokeStyle="white"; ctx.strokeRect(s.x-2,s.y-2,SWIMMER_SIZE+4,SWIMMER_SIZE+4); }
     return;
   }
-
-  if (
-    s.state === "walkingIn" ||
-    s.state === "walkingOut" ||
-    s.state === "goingToLadder" ||
-    s.state === "climbingOut" ||
-    s.state === "waitingToJump"
-  ) {
-    drawSingleSwimmerBlock(s.x, s.y, s, 1);
-
-    if (s.state === "waitingToJump") {
-      ctx.strokeStyle = "white";
-      ctx.strokeRect(s.x - 2, s.y - 2, SWIMMER_SIZE + 4, SWIMMER_SIZE + 4);
-    }
-
-    return;
-  }
-
-  drawSingleSwimmerBlock(s.x, s.y, s, s.speedY);
-
-  if (s.markedForExit) {
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(s.x - 1, s.y - 1, SWIMMER_SIZE + 2, SWIMMER_SIZE + 2);
-  }
+  drawSingleSwimmerBlock(s.x,s.y,s,s.speedY);
+  if (s.markedForExit) { ctx.strokeStyle="white"; ctx.lineWidth=1; ctx.strokeRect(s.x-1,s.y-1,SWIMMER_SIZE+2,SWIMMER_SIZE+2); }
 }
 
 function drawPlayer() {
-
-  // =========================
-  // DUIK ANIMATIE
-  // =========================
   if (player.isDiving) {
-    const progress = player.diveTimer / DIVE_DURATION;
-
-    ctx.globalAlpha = 0.22;
-    ctx.fillStyle = "#003C8F";
-    ctx.fillRect(player.x + 2, player.y + 6, PLAYER_SIZE - 4, 5);
-
-    ctx.globalAlpha = 0.6;
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(
-      player.x + PLAYER_SIZE / 2,
-      player.y + PLAYER_SIZE / 2,
-      12 + (1 - progress) * 8,
-      4,
-      0,
-      0,
-      Math.PI * 2
-    );
-    ctx.stroke();
-
-    ctx.globalAlpha = 1;
-    return;
+    const progress=player.diveTimer/DIVE_DURATION;
+    ctx.globalAlpha=0.22; ctx.fillStyle="#003C8F"; ctx.fillRect(player.x+2,player.y+6,PLAYER_SIZE-4,5);
+    ctx.globalAlpha=0.6; ctx.strokeStyle="white"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.ellipse(player.x+PLAYER_SIZE/2,player.y+PLAYER_SIZE/2,12+(1-progress)*8,4,0,0,Math.PI*2); ctx.stroke();
+    ctx.globalAlpha=1; return;
   }
-
-  // =========================
-  // SPELER BLOK
-  // =========================
-  ctx.fillStyle = player.color;
-  ctx.fillRect(player.x, player.y, PLAYER_SIZE, PLAYER_SIZE);
-
-  // =========================
-  // RICHTING / KOPJE
-  // =========================
-  ctx.fillStyle = "white";
-
+  ctx.fillStyle=player.color; ctx.fillRect(player.x,player.y,PLAYER_SIZE,PLAYER_SIZE);
+  ctx.fillStyle="white";
   if (player.swimming) {
-    if (player.speedY < 0) {
-      ctx.fillRect(player.x + 4, player.y - 4, 6, 4);
-    } else {
-      ctx.fillRect(player.x + 4, player.y + PLAYER_SIZE, 6, 4);
-    }
+    if (player.speedY<0) ctx.fillRect(player.x+4,player.y-4,6,4); else ctx.fillRect(player.x+4,player.y+PLAYER_SIZE,6,4);
   } else {
-    ctx.fillStyle = "black";
-    ctx.font = "14px monospace";
-    ctx.fillText(
-      "SPACE = SPRING IN HET WATER",
-      POOL_X + 80,
-      POOL_Y + POOL_HEIGHT + 45
-    );
-  }
-
-  // =========================
-  // ✅ KIES JE BAAN (nieuw!)
-  // =========================
-  if (!player.swimming) {
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 1;
-
-    const laneX = xForGlobalSubLane(player.globalSubLane);
-
-    ctx.strokeRect(
-      laneX - 8,
-      POOL_Y,
-      PLAYER_SIZE + 16,
-      POOL_HEIGHT
-    );
+    ctx.fillStyle="black"; ctx.font="14px monospace";
+    ctx.fillText("SPACE = SPRING IN HET WATER",POOL_X+60,POOL_Y+POOL_HEIGHT+45);
+    ctx.strokeStyle="white"; ctx.lineWidth=1;
+    ctx.strokeRect(xForGlobalSubLane(player.globalSubLane)-8,POOL_Y,PLAYER_SIZE+16,POOL_HEIGHT);
   }
 }
 
 function drawHud() {
-  const totalWidth = POOL_WIDTH;
-  const gap = 10;
+  const gap=10, blockWidth=(POOL_WIDTH-2*gap)/3, blockHeight=150;
+  const baseX=POOL_X, y=POOL_Y+POOL_HEIGHT+60, padding=12, lh=28;
 
-  const blockWidth = (totalWidth - 2 * gap) / 3;
-  const blockHeight = 160;
+  let x=baseX;
+  ctx.fillStyle="#222"; ctx.fillRect(x,y,blockWidth,blockHeight);
+  ctx.fillStyle="white"; ctx.font="bold 13px monospace"; ctx.fillText("ZWEMBAD",x+padding,y+padding+8);
+  ctx.font="14px monospace"; ctx.fillText("ZWEMMERS: "+swimmers.length,x+padding,y+padding+32);
 
-  const baseX = POOL_X;
-  const y = POOL_Y + POOL_HEIGHT + 60;
+  x=baseX+blockWidth+gap;
+  ctx.fillStyle="#222"; ctx.fillRect(x,y,blockWidth,blockHeight);
+  ctx.fillStyle="white"; ctx.font="bold 13px monospace"; ctx.fillText("LEVEL "+level,x+padding,y+padding+8);
+  ctx.font="14px monospace";
+  ctx.fillText("TIJD: "+timeLeft,x+padding,y+padding+30);
+  ctx.fillText("BANEN: "+lanesThisLevel+"/"+LANES_PER_LEVEL,x+padding,y+padding+30+lh);
 
-  const padding = 12;
-  const lineHeight = 30;
-
-  // =========================
-  // BLOK 1: ZWEMBAD
-  // =========================
-  let x = baseX;
-
-  ctx.fillStyle = "#222";
-  ctx.fillRect(x, y, blockWidth, blockHeight);
-
-  ctx.fillStyle = "white";
-
-  ctx.font = "bold 14px monospace";
-  ctx.fillText("ZWEMBAD", x + padding, y + padding + 8);
-
-  ctx.font = "16px monospace";
-
-  ctx.fillText(
-    "ZWEMMERS: " + swimmers.length,
-    x + padding,
-    y + padding + 35
-  );
-
-  // =========================
-  // BLOK 2: LEVEL INFO
-  // =========================
-  x = baseX + blockWidth + gap;
-
-  ctx.fillStyle = "#222";
-  ctx.fillRect(x, y, blockWidth, blockHeight);
-
-  ctx.fillStyle = "white";
-
-  ctx.font = "bold 14px monospace";
-  ctx.fillText("LEVEL", x + padding, y + padding + 8);
-
-  ctx.font = "16px monospace";
-
-  let textY = y + padding + 30;
-
-  ctx.fillText("LEVEL: " + level, x + padding, textY);
-
-  ctx.fillText("TIJD: " + timeLeft, x + padding, textY + lineHeight);
-
-  // ✅ slash notatie
-  ctx.fillText(
-    "BANEN: " + lanesThisLevel + "/" + LANES_PER_LEVEL,
-    x + padding,
-    textY + 2 * lineHeight
-  );
-
-  // =========================
-  // BLOK 3: SPELER
-  // =========================
-  x = baseX + 2 * (blockWidth + gap);
-
-  ctx.fillStyle = "#222";
-  ctx.fillRect(x, y, blockWidth, blockHeight);
-
-  ctx.fillStyle = "white";
-
-  ctx.font = "bold 14px monospace";
-  ctx.fillText("SPELER", x + padding, y + padding + 8);
-
-  ctx.font = "16px monospace";
-
-  textY = y + padding + 30;
-
-  ctx.fillText(
-    "BOTSINGEN: " + hits,
-    x + padding,
-    textY
-  );
-
-  ctx.fillText(
-    "DUIKEN: " + player.divesLeft,
-    x + padding,
-    textY + lineHeight
-  );
-
-  const penaltySeconds = Math.ceil(player.penaltyTimer / 60);
-
-  ctx.fillStyle = player.penaltyTimer > 0 ? "orange" : "white";
-
-  ctx.fillText(
-    "STRAF: " + penaltySeconds,
-    x + padding,
-    textY + 2 * lineHeight
-  );
+  x=baseX+2*(blockWidth+gap);
+  ctx.fillStyle="#222"; ctx.fillRect(x,y,blockWidth,blockHeight);
+  ctx.fillStyle="white"; ctx.font="bold 13px monospace"; ctx.fillText("SPELER",x+padding,y+padding+8);
+  ctx.font="14px monospace";
+  ctx.fillText("BOTSINGEN: "+hits,x+padding,y+padding+30);
+  ctx.fillText("DUIKEN: "+player.divesLeft,x+padding,y+padding+30+lh);
+  ctx.fillStyle=player.penaltyTimer>0?"orange":"white";
+  ctx.fillText("STRAF: "+Math.ceil(player.penaltyTimer/60)+"s",x+padding,y+padding+30+2*lh);
 }
 
-
 function drawLegend() {
-  ctx.font = "11px monospace";
+  const x=HUD_X+5;
+  let ly=90;
 
-  ctx.fillStyle = "#35C759";
-  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 525);
+  ctx.fillStyle="rgba(0,0,0,0.55)"; ctx.fillRect(HUD_X,80,210,canvas.height-80);
 
-  ctx.fillStyle = "#1976D2";
-  ctx.fillText("BLAUW langzamer", HUD_X + 5, 545);
+  ctx.fillStyle="white"; ctx.font="bold 10px monospace";
+  ctx.fillText("ZWEMMERS IN HET SPEL:",x,ly); ly+=16;
 
-  ctx.fillStyle = "#00BCD4";
-  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 565);
+  const shown=[];
+  for (let l=1;l<=Math.min(level,MAX_LEVEL);l++) {
+    const tn=LEVEL_SWIMMER_INTRO[l];
+    if (tn&&SWIMMER_TYPES[tn]) shown.push({l,tn});
+  }
+  shown.slice(-11).forEach(({l,tn})=>{
+    const type=SWIMMER_TYPES[tn];
+    ctx.fillStyle=type.color; ctx.fillRect(x,ly-9,11,11);
+    ctx.fillStyle=l===level?"#FFD700":"rgba(255,255,255,0.85)";
+    ctx.font=(l===level?"bold ":"")+"9px monospace";
+    ctx.fillText("L"+l+" "+type.label,x+14,ly);
+    ly+=13;
+  });
 
-  ctx.fillStyle = "#111111";
-  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 585);
-
-  ctx.fillStyle = "#B06AD9";
-  ctx.fillText("PAARS bejaarden, 2 vakken", HUD_X + 5, 605);
-
-  ctx.fillStyle = "#ff9800";
-  ctx.fillText("ORANJE = zwemmer-boete", HUD_X + 5, 625);
-
-  ctx.fillStyle = "white";
-  ctx.fillText("Level 1-9: 3 subbanen", HUD_X + 5, 655);
-  ctx.fillText("Vanaf level 10: 5 subbanen", HUD_X + 5, 675);
-  ctx.fillText("SPACE zwemmen = duik", HUD_X + 5, 695);
+  ly+=10;
+  ctx.fillStyle="rgba(255,255,255,0.45)"; ctx.font="9px monospace";
+  ctx.fillText("← → wisselen van subbaan",x,ly); ly+=12;
+  ctx.fillText("↑ ↓ sneller / langzamer",x,ly); ly+=12;
+  ctx.fillText("SPACE spring in / duik",x,ly);
 }
 
 function drawOverlay() {
   if (!overlay) return;
+  ctx.fillStyle="rgba(0,0,0,0.80)"; ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  const progress = overlay.timer / overlay.duration;
-  const scale = 1 + (1 - progress) * 0.12;
+  if (overlay.type==="swimmerIntro") {
+    const tn=overlay.typeName, type=tn?SWIMMER_TYPES[tn]:null;
+    const cx=canvas.width/2, cy=canvas.height/2;
 
-  ctx.fillStyle = "rgba(0,0,0,0.68)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle="#FFD700"; ctx.font="bold 50px monospace";
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("LEVEL "+overlay.level,cx,cy-150);
 
-  ctx.save();
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.scale(scale, scale);
+    if (type) {
+      ctx.fillStyle="rgba(255,255,255,0.10)"; ctx.fillRect(cx-210,cy-120,420,240);
 
-  ctx.fillStyle = "white";
-  ctx.font = "bold 42px monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(overlay.text, 0, 0);
+      ctx.fillStyle="rgba(255,255,255,0.7)"; ctx.font="13px monospace";
+      ctx.fillText("NIEUW IN DIT LEVEL:",cx,cy-90);
 
-  if (!gameFinished && overlay.text.indexOf("CLEARED") >= 0) {
-    ctx.font = "18px monospace";
-    ctx.fillText("Volgend level start zo", 0, 48);
+      // Swimmer preview block
+      ctx.fillStyle=type.color; ctx.fillRect(cx-22,cy-68,44,44);
+      if (type.stripe) { ctx.fillStyle=type.stripe; ctx.fillRect(cx-16,cy-50,32,8); }
+      ctx.fillStyle="black"; ctx.fillRect(cx-10,cy-73,20,7); // head
+
+      ctx.fillStyle="white"; ctx.font="bold 22px monospace";
+      ctx.fillText(type.label,cx,cy+5);
+      ctx.fillStyle="rgba(255,255,255,0.75)"; ctx.font="13px monospace";
+      ctx.fillText(type.description,cx,cy+38);
+
+      const progress=overlay.timer/overlay.duration;
+      const bw=260;
+      ctx.fillStyle="rgba(255,255,255,0.2)"; ctx.fillRect(cx-bw/2,cy+72,bw,5);
+      ctx.fillStyle="#FFD700"; ctx.fillRect(cx-bw/2,cy+72,bw*progress,5);
+      ctx.fillStyle="rgba(255,255,255,0.4)"; ctx.font="10px monospace";
+      ctx.fillText("Start over "+Math.ceil(overlay.timer/60)+"s...",cx,cy+95);
+    }
+    ctx.textAlign="left"; ctx.textBaseline="alphabetic"; return;
   }
 
+  // Standard text overlay
+  const progress=overlay.timer/overlay.duration;
+  ctx.save();
+  ctx.translate(canvas.width/2,canvas.height/2);
+  ctx.scale(1+(1-progress)*0.12,1+(1-progress)*0.12);
+  ctx.fillStyle="white"; ctx.font="bold 42px monospace";
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(overlay.text,0,0);
+  if (!gameFinished&&overlay.text.indexOf("CLEARED")>=0) { ctx.font="17px monospace"; ctx.fillText("Nieuwe zwemmer wordt geïntroduceerd...",0,52); }
   ctx.restore();
 }
 
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  drawDeck();
-  drawPool();
-  drawLadders();
-
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawDeck(); drawPool(); drawLadders();
   swimmers.forEach(drawSwimmer);
-
-  drawPlayer();
-
-  drawHud();
-  drawLegend();
-
-  drawOverlay();
+  drawPlayer(); drawHud(); drawLegend(); drawOverlay();
 }
 
 // =====================================================
@@ -2281,104 +1345,47 @@ function draw() {
 // =====================================================
 
 function loop() {
-  update();
-  draw();
-
-  if (timeLeft > 0 && hits < maxHits && !gameFinished) {
-    requestAnimationFrame(loop);
-  } else {
-    if (gameFinished) {
-      requestAnimationFrame(loop);
-      return;
-    }
-
-    if (hits >= maxHits && !overlay) {
-      showOverlay("BADMEESTER: ERUIT!", 300, () => {
-        gameFinished = true;
-      });
-      requestAnimationFrame(loop);
-      return;
-    }
-
-    if (timeLeft <= 0 && !overlay) {
-      showOverlay("ZWEMBAD DICHT!", 300, () => {
-        gameFinished = true;
-      });
-      requestAnimationFrame(loop);
-      return;
-    }
-
-    requestAnimationFrame(loop);
-  }
+  update(); draw();
+  if (timeLeft>0&&hits<maxHits&&!gameFinished) { requestAnimationFrame(loop); return; }
+  if (gameFinished) { requestAnimationFrame(loop); return; }
+  if (hits>=maxHits&&!overlay) { showOverlay("BADMEESTER: ERUIT!",300,()=>{gameFinished=true;}); }
+  if (timeLeft<=0&&!overlay) { showOverlay("ZWEMBAD DICHT!",300,()=>{gameFinished=true;}); }
+  requestAnimationFrame(loop);
 }
 
 // =====================================================
 // TIMER
 // =====================================================
 
-setInterval(() => {
-  if (timeLeft > 0 && hits < maxHits && !gamePaused && !gameFinished) {
-    timeLeft--;
-  }
-}, 1000);
+setInterval(()=>{ if(timeLeft>0&&hits<maxHits&&!gamePaused&&!gameFinished) timeLeft--; },1000);
 
 // =====================================================
 // CONTROLS
 // =====================================================
 
-document.addEventListener("keydown", e => {
-  if (gamePaused || gameFinished) return;
-
-  if (e.key === "ArrowLeft") {
-    movePlayerHorizontal(-1);
+document.addEventListener("keydown",e=>{
+  if (gamePaused||gameFinished) return;
+  if (e.key==="ArrowLeft")  movePlayerHorizontal(-1);
+  if (e.key==="ArrowRight") movePlayerHorizontal(1);
+  if (e.code==="Space") {
+    if (!player.swimming) { player.swimming=true; player.y=POOL_Y+2; player.speedY=player.baseSpeed; }
+    else startDive();
   }
-
-  if (e.key === "ArrowRight") {
-    movePlayerHorizontal(1);
-  }
-
-
-  if (e.code === "Space") {
-        if (!player.swimming) {
-      player.swimming = true;
-
-      // ✅ start net IN het water (geen clipping)
-      player.y = POOL_Y + 2;
-
-      player.speedY = player.baseSpeed;
-    } else {
-      startDive();
-    }
-  }
-
-  if (player.swimming && player.penaltyTimer === 0 && !player.isDiving) {
-    if (e.key === "ArrowUp") {
-      if (player.speedY < 0) {
-        player.speedY -= 0.25;
-      } else {
-        player.speedY += 0.25;
-      }
-    }
-
-    if (e.key === "ArrowDown") {
-      if (player.speedY < 0) {
-        player.speedY += 0.25;
-      } else {
-        player.speedY -= 0.25;
-      }
-    }
-
-    if (Math.abs(player.speedY) < player.minSpeed) {
-      player.speedY = player.speedY < 0 ? -player.minSpeed : player.minSpeed;
-    }
-
-    player.speedY = clamp(player.speedY, -player.maxSpeed, player.maxSpeed);
+  if (player.swimming&&player.penaltyTimer===0&&!player.isDiving) {
+    if (e.key==="ArrowUp")   player.speedY+=player.speedY<0?-0.25:0.25;
+    if (e.key==="ArrowDown") player.speedY+=player.speedY<0?0.25:-0.25;
+    if (Math.abs(player.speedY)<player.minSpeed) player.speedY=player.speedY<0?-player.minSpeed:player.minSpeed;
+    player.speedY=clamp(player.speedY,-player.maxSpeed,player.maxSpeed);
   }
 });
 
+// =====================================================
 // START
-loop();
-</script>
+// =====================================================
 
+showNewSwimmerIntro(1, () => { gamePaused = false; });
+loop();
+
+</script>
 </body>
 </html>
