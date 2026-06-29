@@ -50,8 +50,8 @@ const SWIMMER_PENALTY_DURATION = 180;
 const PAIR_COLLISION_LIMIT = 2;
 const PAIR_COLLISION_COOLDOWN = 50;
 
-const LANES_PER_LEVEL = 10;
-const MAX_LEVEL = 30;
+const LANES_PER_LEVEL = 5;
+const MAX_LEVEL = 10;
 
 const GATE = {
   x: 660,
@@ -77,7 +77,7 @@ const LADDERS = [
 // =====================================================
 
 function getSubLanesPerLane() {
-  return level < 10 ? 3 : 5;
+  return 3;
 }
 
 function getSubLaneWidth() {
@@ -149,15 +149,29 @@ function resetForNextLevel(oldSubLaneCount, newSubLaneCount) {
 
   player.penaltyTimer = 0;
   player.color = "blue";
-  player.divesLeft = MAX_DIVES_PER_LEVEL;
+  // ✅ eindbaas: onbeperkt duiken; anders normaal aantal
+  player.divesLeft = (level >= MAX_LEVEL) ? 999 : MAX_DIVES_PER_LEVEL;
   player.isDiving = false;
   player.diveTimer = 0;
+
+  // ✅ speler begint weer op de rand van het bad
+  player.swimming = false;
+  player.speedY = 0;
+  player.y = POOL_Y - 22;
 
   player.globalSubLane = globalSubLaneFromLaneAndSub(
     2,
     Math.floor(getSubLanesPerLane() / 2)
   );
   player.x = xForGlobalSubLane(player.globalSubLane);
+
+  // ✅ eindbaas-level: leeg bad, duikerslinie wordt apart gespawnd
+  if (level >= MAX_LEVEL) {
+    swimmers = [];
+    pairCollisionCounts = {};
+    pairCollisionCooldowns = {};
+    return;
+  }
 
   swimmers.forEach(s => {
   s.penaltyTimer = 0;
@@ -192,7 +206,7 @@ function checkLevelProgress() {
   const clearedLevel = level;
   const oldSubLaneCount = getSubLanesPerLane();
 
-  showOverlay("LEVEL " + clearedLevel + " CLEARED", 150, () => {
+  showOverlay("LEVEL " + clearedLevel + " GEHAALD", 130, () => {
     if (clearedLevel >= MAX_LEVEL) {
       gameFinished = true;
       overlay = {
@@ -210,8 +224,54 @@ function checkLevelProgress() {
     const newSubLaneCount = getSubLanesPerLane();
 
     resetForNextLevel(oldSubLaneCount, newSubLaneCount);
-    gamePaused = false;
+
+    // ✅ introduceer het nieuwe level met uitleg + plaatje
+    showLevelIntro(level);
   });
+}
+
+// =====================================================
+// LEVEL INTRO OVERLAYS
+// =====================================================
+
+const LEVEL_INTROS = {
+  1:  { title: "LEVEL 1",  typeName: "ordinary",        lines: ["Gewone zwemmers", "Net zo snel als jij"] },
+  2:  { title: "LEVEL 2",  typeName: "slower",          lines: ["Langzamere zwemmer", "Houd rekening met tempo"] },
+  3:  { title: "LEVEL 3",  typeName: "faster",          lines: ["Snellere zwemmer", "Iets sneller dan jij"] },
+  4:  { title: "LEVEL 4",  typeName: "elderlySingle",   lines: ["Bejaarde zwemmer", "Heel langzaam — geef voorrang!"] },
+  5:  { title: "LEVEL 5",  typeName: "friendlyCrawl",   lines: ["Vriendelijke borstcrawl", "Snel, maar wijkt netjes uit"] },
+  6:  { title: "LEVEL 6",  typeName: "elderlyGroup",    lines: ["Groep bejaarden", "Langzaam en lekker breed"] },
+  7:  { title: "LEVEL 7",  typeName: "unfriendlyCrawl", lines: ["Onvriendelijke borstcrawl", "Snel en let NIET op!"] },
+  8:  { title: "LEVEL 8",  typeName: "bomb",            lines: ["BOMMETJE!", "Kind springt van de kant"] },
+  9:  { title: "LEVEL 9",  typeName: "raft",            lines: ["Kinderen op een vlot", "Drijft alle kanten op (max 2)"] },
+  10: { title: "EINDBAAS", typeName: "boss",            lines: ["Linie van duikers!", "DUIK eronderdoor met SPACE"] }
+};
+
+function showLevelIntro(lvl) {
+  const intro = LEVEL_INTROS[lvl];
+
+  if (!intro) {
+    gamePaused = false;
+    return;
+  }
+
+  overlay = {
+    text: intro.title,
+    lines: intro.lines,
+    typeName: intro.typeName,
+    timer: 230,
+    duration: 230,
+    onDone: () => {
+      gamePaused = false;
+
+      // ✅ eindbaas: spawn de duikerslinie zodra het spel begint
+      if (lvl >= MAX_LEVEL) {
+        spawnBossLine();
+      }
+    }
+  };
+
+  gamePaused = true;
 }
 
 // =====================================================
@@ -219,19 +279,11 @@ function checkLevelProgress() {
 // =====================================================
 
 function getLevelConfig(level) {
-  if (level < 10) {
-    return { maxSwimmers: 30, startSwimmers: 15 };
-  }
+  // ✅ rustige start, daarna geleidelijk drukker
+  const startSwimmers = Math.min(3 + (level - 1) * 3, 22);
+  const maxSwimmers = Math.min(6 + (level - 1) * 4, 40);
 
-  if (level < 20) {
-    return { maxSwimmers: 40, startSwimmers: 30 };
-  }
-
-  if (level < 30) {
-    return { maxSwimmers: 50, startSwimmers: 45 };
-  }
-
-  return { maxSwimmers: 75, startSwimmers: 50 };
+  return { maxSwimmers, startSwimmers };
 }
 
 function getMaxSwimmers() {
@@ -336,6 +388,11 @@ function randomFromArray(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// bejaarden (alleen of in groep) hebben altijd voorrang
+function hasElderlyPriority(s) {
+  return s.typeName === "elderlyGroup" || s.typeName === "elderlySingle";
+}
+
 const ACTIVE_POOL_STATES = new Set([
   "swimming",
   "walkingIn",
@@ -413,11 +470,11 @@ function shouldAvoid(s, o) {
   // ✅ 0. Bejaarden hebben voorrang
   // =========================
 
-  if (o.typeName === "elderlyGroup" && s.typeName !== "elderlyGroup") {
+  if (hasElderlyPriority(o) && !hasElderlyPriority(s)) {
     return true; // jij wijkt uit
   }
 
-  if (s.typeName === "elderlyGroup" && o.typeName !== "elderlyGroup") {
+  if (hasElderlyPriority(s) && !hasElderlyPriority(o)) {
     return false; // bejaarde blijft
   }
 
@@ -893,42 +950,52 @@ function chooseWideAvoidance(s, o) {
   return clamp(target, min, max);
 }
 
+// generieke uitwijk-behavior voor nette zwemmers
+function makeAvoidBehavior(range, timer) {
+  return function(s, others) {
+    others.forEach(o => {
+      if (o === s) return;
+      if (o.state !== "swimming") return;
+      if (!shouldAvoid(s, o)) return;
+      if (!swimmersShareLogicalSubLane(s, o)) return;
+
+      const distance = forwardDistance(s, o);
+
+      if (distance < range && distance > 12 && !s.avoiding) {
+        s.avoiding = true;
+        s.avoidTimer = timer;
+        s.targetGlobalSubLane = chooseWideAvoidance(s, o);
+        s.returnToLane = true;
+      }
+    });
+  };
+}
+
+function noBehavior() {
+  // Anticipeert niet / beweegt via eigen state-machine.
+}
+
 const SWIMMER_TYPES = {
 
+  // LEVEL 1 — net zo snel als de speler (~2.0)
   ordinary: {
     label: "Gewone zwemmer",
     color: "#35C759",
     stripe: "white",
-    speedMin: 10,
-    speedMax: 25,
+    speedMin: 22,
+    speedMax: 28,
     lanesMin: 20,
     lanesMax: 30,
-
-    behavior: function(s, others) {
-      others.forEach(o => {
-        if (o === s) return;
-        if (o.state !== "swimming") return;
-        if (!shouldAvoid(s, o)) return;
-        if (!swimmersShareLogicalSubLane(s, o)) return;
-
-        const distance = forwardDistance(s, o);
-
-        if (distance < 95 && distance > 12 && !s.avoiding) {
-          s.avoiding = true;
-          s.avoidTimer = 85;
-          s.targetGlobalSubLane = chooseWideAvoidance(s, o);
-          s.returnToLane = true;
-        }
-      });
-    }
+    behavior: makeAvoidBehavior(95, 85)
   },
 
+  // LEVEL 2 — iets langzamer
   slower: {
-    label: "Iets langzamere zwemmer",
+    label: "Langzamere zwemmer",
     color: "#1976D2",
     stripe: "white",
-    speedMin: 5,
-    speedMax: 15,
+    speedMin: 11,
+    speedMax: 17,
     lanesMin: 20,
     lanesMax: 30,
 
@@ -954,12 +1021,37 @@ const SWIMMER_TYPES = {
     }
   },
 
+  // LEVEL 3 — iets sneller dan de speler
+  faster: {
+    label: "Snellere zwemmer",
+    color: "#C0CA33",
+    stripe: "black",
+    speedMin: 30,
+    speedMax: 36,
+    lanesMin: 25,
+    lanesMax: 35,
+    behavior: makeAvoidBehavior(90, 80)
+  },
+
+  // LEVEL 4 — losse bejaarde, heel langzaam, voorrang
+  elderlySingle: {
+    label: "Bejaarde zwemmer",
+    color: "#CE93D8",
+    stripe: "white",
+    speedMin: 4,
+    speedMax: 8,
+    lanesMin: 8,
+    lanesMax: 16,
+    behavior: noBehavior
+  },
+
+  // LEVEL 5 — vriendelijke crawl, snel maar wijkt netjes uit
   friendlyCrawl: {
     label: "Vriendelijke borstcrawl",
     color: "#00BCD4",
     stripe: "black",
-    speedMin: 15,
-    speedMax: 25,
+    speedMin: 28,
+    speedMax: 34,
     lanesMin: 30,
     lanesMax: 40,
 
@@ -982,32 +1074,52 @@ const SWIMMER_TYPES = {
     }
   },
 
-  unfriendlyCrawl: {
-    label: "Niet-vriendelijke borstcrawl",
-    color: "#111111",
-    stripe: "white",
-    speedMin: 25,
-    speedMax: 30,
-    lanesMin: 40,
-    lanesMax: 50,
-
-    behavior: function(s, others) {
-      // Anticipeert niet.
-    }
-  },
-
+  // LEVEL 6 — groep bejaarden, langzaam en breed
   elderlyGroup: {
-    label: "Bejaarden",
+    label: "Groep bejaarden",
     color: "#B06AD9",
     stripe: "white",
     speedMin: 3,
     speedMax: 7,
     lanesMin: 8,
     lanesMax: 18,
+    behavior: noBehavior
+  },
 
-    behavior: function(s, others) {
-      // Bejaarden wijken niet uit.
-    }
+  // LEVEL 7 — onvriendelijke crawl, snel en let niet op
+  unfriendlyCrawl: {
+    label: "Onvriendelijke borstcrawl",
+    color: "#111111",
+    stripe: "white",
+    speedMin: 30,
+    speedMax: 36,
+    lanesMin: 40,
+    lanesMax: 50,
+    behavior: noBehavior
+  },
+
+  // LEVEL 8 — bommetje, springt van de kant
+  bomb: {
+    label: "Bommetje",
+    color: "#FF7043",
+    stripe: "white",
+    speedMin: 0,
+    speedMax: 0,
+    lanesMin: 0,
+    lanesMax: 0,
+    behavior: noBehavior
+  },
+
+  // LEVEL 9 — kinderen op een vlot, drijven alle kanten op
+  raft: {
+    label: "Vlot met kinderen",
+    color: "#8D6E63",
+    stripe: "#5D4037",
+    speedMin: 0,
+    speedMax: 0,
+    lanesMin: 0,
+    lanesMax: 0,
+    behavior: noBehavior
   }
 };
 
@@ -1015,50 +1127,35 @@ const SWIMMER_TYPES = {
 // TYPE AVAILABILITY
 // =====================================================
 
+// Elk level introduceert één extra zwemmertype (cumulatief).
+const TYPE_UNLOCKS = [
+  [],                                                                                                            // 0 (ongebruikt)
+  ["ordinary"],                                                                                                  // level 1
+  ["ordinary", "slower"],                                                                                        // level 2
+  ["ordinary", "slower", "faster"],                                                                              // level 3
+  ["ordinary", "slower", "faster", "elderlySingle"],                                                             // level 4
+  ["ordinary", "slower", "faster", "elderlySingle", "friendlyCrawl"],                                            // level 5
+  ["ordinary", "slower", "faster", "elderlySingle", "friendlyCrawl", "elderlyGroup"],                            // level 6
+  ["ordinary", "slower", "faster", "elderlySingle", "friendlyCrawl", "elderlyGroup", "unfriendlyCrawl"],         // level 7
+  ["ordinary", "slower", "faster", "elderlySingle", "friendlyCrawl", "elderlyGroup", "unfriendlyCrawl", "bomb"], // level 8
+  ["ordinary", "slower", "faster", "elderlySingle", "friendlyCrawl", "elderlyGroup", "unfriendlyCrawl", "bomb", "raft"] // level 9
+];
+
+// hoeveel van een speciaal type tegelijk in het bad mogen
+const TYPE_CAPS = {
+  elderlySingle: 3,
+  elderlyGroup: 2,
+  bomb: 2,
+  raft: 2
+};
+
+function countType(typeName) {
+  return swimmers.filter(s => s.typeName === typeName && s.state !== "walkingOut").length;
+}
+
 function getAvailableSwimmerTypes() {
-  if (level < 4) {
-    return [
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "slower",
-      "elderlyGroup"
-    ];
-  }
-
-  if (level < 8) {
-    return [
-      "ordinary",
-      "ordinary",
-      "ordinary",
-      "slower",
-      "slower",
-      "elderlyGroup"
-    ];
-  }
-
-  if (level < 15) {
-    return [
-      "ordinary",
-      "ordinary",
-      "slower",
-      "friendlyCrawl",
-      "friendlyCrawl",
-      "elderlyGroup"
-    ];
-  }
-
-  return [
-    "ordinary",
-    "slower",
-    "friendlyCrawl",
-    "friendlyCrawl",
-    "unfriendlyCrawl",
-    "elderlyGroup"
-  ];
+  const idx = Math.min(level, TYPE_UNLOCKS.length - 1);
+  return TYPE_UNLOCKS[idx];
 }
 
 // =====================================================
@@ -1078,19 +1175,27 @@ function laneHasElderly(lane) {
 }
 
 function createSwimmer(randomPosition) {
-  let typeNames = getAvailableSwimmerTypes();
+  // respecteer de caps op speciale types
+  let typeNames = getAvailableSwimmerTypes().filter(t => {
+    const cap = TYPE_CAPS[t];
+    return cap === undefined || countType(t) < cap;
+  });
 
-  // ✅ Level 1-9: max 5 bejaarden
-  if (level < 10 && countElderly() >= 5) {
-   typeNames = typeNames.filter(t => t !== "elderlyGroup");
+  if (typeNames.length === 0) {
+    typeNames = ["ordinary"];
   }
 
   const typeName = randomFromArray(typeNames);
+
+  // bommetje en vlot hebben hun eigen spawn-logica
+  if (typeName === "bomb") return createBomb();
+  if (typeName === "raft") return createRaft();
+
   const type = SWIMMER_TYPES[typeName];
 
   let lane;
 
-  if (typeName === "elderlyGroup" && level < 10) {
+  if (typeName === "elderlyGroup") {
 
     // ✅ alleen lanes zonder bejaarden
     const freeLanes = [];
@@ -1148,17 +1253,15 @@ function createSwimmer(randomPosition) {
 
   if (typeName === "elderlyGroup") {
     groupSize = Math.random() < 0.65 ? 2 : 3;
-    entryLadder = chooseEntryLadderForLane(lane);
+
+    // groep verschijnt aan de boven- of onderrand en begint te zwemmen
+    x = baseX;
+    state = "swimming";
 
     if (randomPosition) {
-      x = baseX;
       y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
-      state = "swimming";
     } else {
-      x = GATE.x;
-      y = GATE.y;
-      state = "goingToLadderToEnter";
-      path = buildElderlyEntryPath(entryLadder);
+      y = fromTop ? POOL_Y : POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
     }
   } else {
     if (randomPosition) {
@@ -1219,8 +1322,230 @@ function createSwimmer(randomPosition) {
     enteringMember,
     enterTimer,
 
-    penaltyTimer: 0
+    penaltyTimer: 0,
+
+    // bommetje / vlot velden (defaults)
+    vx: 0,
+    vy: 0,
+    splashTimer: 0,
+    floatTimer: 0,
+    splashRadius: 0
   };
+}
+
+// =====================================================
+// BOMMETJE (LEVEL 8)
+// =====================================================
+
+function createBomb() {
+  const type = SWIMMER_TYPES.bomb;
+
+  // kies een kant van het bad (lange zijde) en een hoogte
+  const fromLeft = Math.random() < 0.5;
+  const lane = fromLeft ? 0 : LANE_COUNT - 1;
+  const sub = fromLeft ? 0 : getSubLanesPerLane() - 1;
+  const globalSubLane = globalSubLaneFromLaneAndSub(lane, sub);
+
+  const targetX = xForSwimmerGlobalSubLane(globalSubLane);
+  const deckX = fromLeft ? POOL_X - DECK_MARGIN : POOL_X + POOL_WIDTH + DECK_MARGIN;
+  const splashY = POOL_Y + 60 + Math.random() * (POOL_HEIGHT - 140);
+
+  return {
+    id: nextSwimmerId++,
+    typeName: "bomb",
+    type,
+
+    state: "bombApproach",
+
+    lane,
+    globalSubLane,
+    originalGlobalSubLane: globalSubLane,
+    targetGlobalSubLane: globalSubLane,
+
+    fromLeft,
+    deckX,
+    targetX,
+
+    baseX: targetX,
+    x: deckX,
+    y: splashY,
+
+    path: [],
+
+    speedY: 0,
+    normalSpeed: 0,
+    walkSpeed: 1.5,
+
+    avoiding: false,
+    avoidTimer: 0,
+    returnToLane: false,
+
+    stopped: false,
+    stopTimer: 0,
+
+    lanesSwum: 0,
+    targetLanes: 0,
+
+    markedForExit: false,
+    exitLadder: null,
+    removeMe: false,
+
+    groupSize: 1,
+    entryLadder: null,
+    enteringMember: 0,
+    enterTimer: 18,
+
+    penaltyTimer: 0,
+
+    vx: 0,
+    vy: 0,
+    splashTimer: 0,
+    floatTimer: 0,
+    splashRadius: 0
+  };
+}
+
+// =====================================================
+// VLOT MET KINDEREN (LEVEL 9)
+// =====================================================
+
+const RAFT_WIDTH = 54;
+const RAFT_HEIGHT = 30;
+
+function createRaft() {
+  const type = SWIMMER_TYPES.raft;
+
+  const x = POOL_X + 20 + Math.random() * (POOL_WIDTH - RAFT_WIDTH - 40);
+  const y = POOL_Y + 20 + Math.random() * (POOL_HEIGHT - RAFT_HEIGHT - 40);
+
+  const speed = 0.7 + Math.random() * 0.6;
+  const angle = Math.random() * Math.PI * 2;
+
+  return {
+    id: nextSwimmerId++,
+    typeName: "raft",
+    type,
+
+    state: "rafting",
+
+    lane: 0,
+    globalSubLane: 0,
+    originalGlobalSubLane: 0,
+    targetGlobalSubLane: 0,
+
+    baseX: x,
+    x,
+    y,
+
+    path: [],
+
+    speedY: 0,
+    normalSpeed: 0,
+    walkSpeed: 0,
+
+    avoiding: false,
+    avoidTimer: 0,
+    returnToLane: false,
+
+    stopped: false,
+    stopTimer: 0,
+
+    lanesSwum: 0,
+    targetLanes: 0,
+
+    markedForExit: false,
+    exitLadder: null,
+    removeMe: false,
+
+    groupSize: Math.random() < 0.5 ? 1 : 2,
+    entryLadder: null,
+    enteringMember: 0,
+    enterTimer: 0,
+
+    penaltyTimer: 0,
+
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    splashTimer: 0,
+    floatTimer: 0,
+    splashRadius: 0
+  };
+}
+
+// =====================================================
+// EINDBAAS: DUIKERSLINIE (LEVEL 10)
+// =====================================================
+
+function createDiver(lane, sub, speed) {
+  const type = SWIMMER_TYPES.unfriendlyCrawl;
+  const globalSubLane = globalSubLaneFromLaneAndSub(lane, sub);
+
+  return {
+    id: nextSwimmerId++,
+    typeName: "unfriendlyCrawl",
+    type,
+
+    state: "swimming",
+
+    lane,
+    globalSubLane,
+    originalGlobalSubLane: globalSubLane,
+    targetGlobalSubLane: globalSubLane,
+
+    baseX: xForSwimmerGlobalSubLane(globalSubLane),
+    x: xForSwimmerGlobalSubLane(globalSubLane),
+    y: POOL_Y,
+
+    jumpX: 0,
+    jumpY: 0,
+    fromTop: true,
+
+    path: [],
+
+    speedY: Math.abs(speed),
+    normalSpeed: speed,
+    walkSpeed: 1.5,
+
+    avoiding: false,
+    avoidTimer: 0,
+    returnToLane: false,
+
+    stopped: false,
+    stopTimer: 0,
+
+    lanesSwum: 0,
+    targetLanes: 999999, // blijft op en neer zwemmen als linie
+    isBoss: true,
+
+    markedForExit: false,
+    exitLadder: null,
+    removeMe: false,
+
+    groupSize: 1,
+    entryLadder: null,
+    enteringMember: 0,
+    enterTimer: 0,
+
+    penaltyTimer: 0,
+
+    vx: 0,
+    vy: 0,
+    splashTimer: 0,
+    floatTimer: 0,
+    splashRadius: 0
+  };
+}
+
+function spawnBossLine() {
+  swimmers = [];
+
+  const speed = speedFromScale(24, 24); // identiek tempo → bewegen als één lijn
+
+  for (let lane = 0; lane < LANE_COUNT; lane++) {
+    for (let sub = 0; sub < getSubLanesPerLane(); sub++) {
+      swimmers.push(createDiver(lane, sub, speed));
+    }
+  }
 }
 
 // =====================================================
@@ -1261,6 +1586,7 @@ function getOccupiedSubLanes() {
 function spawnPopulationEvent() {
 
   if (gameFinished) return;
+  if (level >= MAX_LEVEL) return; // eindbaas: geen losse zwemmers
 
   const max = getMaxSwimmers();
 
@@ -1502,6 +1828,59 @@ function updateWalkingOut(s) {
 }
 
 // =====================================================
+// BOMMETJE / VLOT MOVEMENT
+// =====================================================
+
+function updateBomb(s) {
+  if (s.state === "bombApproach") {
+    const arrived = moveTowards(s, s.targetX, s.y, 2.4);
+
+    if (arrived) {
+      s.state = "bombJump";
+      s.splashTimer = 26;
+      s.splashRadius = 0;
+    }
+    return;
+  }
+
+  if (s.state === "bombJump") {
+    s.splashTimer--;
+    s.splashRadius = Math.min(24, s.splashRadius + 1.4);
+
+    if (s.splashTimer <= 0) {
+      s.state = "bombFloat";
+      s.floatTimer = 80;
+    }
+    return;
+  }
+
+  if (s.state === "bombFloat") {
+    s.floatTimer--;
+    s.splashRadius = Math.max(9, s.splashRadius - 0.15);
+
+    if (s.floatTimer <= 0) {
+      startExit(s); // klimt via dichtstbijzijnde trap het bad uit
+    }
+    return;
+  }
+}
+
+function updateRaft(s) {
+  s.x += s.vx;
+  s.y += s.vy;
+
+  const minX = POOL_X + 2;
+  const maxX = POOL_X + POOL_WIDTH - RAFT_WIDTH - 2;
+  const minY = POOL_Y + 2;
+  const maxY = POOL_Y + POOL_HEIGHT - RAFT_HEIGHT - 2;
+
+  if (s.x < minX) { s.x = minX; s.vx = Math.abs(s.vx); }
+  if (s.x > maxX) { s.x = maxX; s.vx = -Math.abs(s.vx); }
+  if (s.y < minY) { s.y = minY; s.vy = Math.abs(s.vy); }
+  if (s.y > maxY) { s.y = maxY; s.vy = -Math.abs(s.vy); }
+}
+
+// =====================================================
 // SWIMMER UPDATE
 // =====================================================
 
@@ -1546,6 +1925,16 @@ function updateSwimmerSpeedPenalty(s) {
 
 function updateSwimmerMovement() {
   swimmers.forEach(s => {
+
+    if (s.state === "bombApproach" || s.state === "bombJump" || s.state === "bombFloat") {
+      updateBomb(s);
+      return;
+    }
+
+    if (s.state === "rafting") {
+      updateRaft(s);
+      return;
+    }
 
     if (s.state === "goingToLadderToEnter") {
       updateGoingToLadderToEnter(s);
@@ -1709,6 +2098,23 @@ function updateSwimmerCollisions() {
 // =====================================================
 
 
+function bombHitsPlayer(s) {
+  if (s.state !== "bombJump" && s.state !== "bombFloat") return false;
+  if (Math.round(player.globalSubLane) !== Math.round(s.globalSubLane)) return false;
+
+  const playerCenterY = player.y + PLAYER_SIZE / 2;
+  return Math.abs(playerCenterY - s.y) < (s.splashRadius + PLAYER_SIZE / 2);
+}
+
+function raftHitsPlayer(s) {
+  return (
+    player.x < s.x + RAFT_WIDTH &&
+    player.x + PLAYER_SIZE > s.x &&
+    player.y < s.y + RAFT_HEIGHT &&
+    player.y + PLAYER_SIZE > s.y
+  );
+}
+
 function updatePlayerCollisions() {
   if (!player.swimming) return;
 
@@ -1717,6 +2123,16 @@ function updatePlayerCollisions() {
   if (player.isDiving) return;
 
   swimmers.forEach(s => {
+    if (s.typeName === "bomb") {
+      if (bombHitsPlayer(s)) applyPlayerPenalty(true);
+      return;
+    }
+
+    if (s.typeName === "raft") {
+      if (raftHitsPlayer(s)) applyPlayerPenalty(true);
+      return;
+    }
+
     if (s.state !== "swimming") return;
 
     if (playerCollidesWithSwimmerLogical(player, s)) {
@@ -1918,7 +2334,67 @@ function drawElderlyGroup(s) {
   ctx.strokeRect(leftX, s.y - 28, getSubLaneWidth() * 2 + 8, 72);
 }
 
+function drawBomb(s) {
+  const cx = s.x + SWIMMER_SIZE / 2;
+
+  // splash-ringen
+  if (s.state === "bombJump" || s.state === "bombFloat") {
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.arc(cx, s.y, s.splashRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx, s.y, s.splashRadius * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // het kind
+  ctx.fillStyle = s.type.color;
+  const ky = (s.state === "bombApproach") ? s.y : s.y - SWIMMER_SIZE / 2;
+  ctx.fillRect(s.x, ky, SWIMMER_SIZE, SWIMMER_SIZE);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(s.x + 3, ky + 5, SWIMMER_SIZE - 6, 3);
+}
+
+function drawRaft(s) {
+  ctx.fillStyle = "#8D6E63";
+  ctx.fillRect(s.x, s.y, RAFT_WIDTH, RAFT_HEIGHT);
+
+  ctx.strokeStyle = "#5D4037";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(s.x, s.y, RAFT_WIDTH, RAFT_HEIGHT);
+
+  ctx.strokeStyle = "rgba(93,64,55,0.6)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(s.x + i * (RAFT_WIDTH / 4), s.y);
+    ctx.lineTo(s.x + i * (RAFT_WIDTH / 4), s.y + RAFT_HEIGHT);
+    ctx.stroke();
+  }
+
+  // kinderen op het vlot
+  ctx.fillStyle = "#FFB74D";
+  for (let i = 0; i < s.groupSize; i++) {
+    ctx.fillRect(s.x + 12 + i * 22, s.y + 9, 12, 12);
+  }
+}
+
 function drawSwimmer(s) {
+  if (s.typeName === "bomb") {
+    drawBomb(s);
+    return;
+  }
+
+  if (s.typeName === "raft") {
+    drawRaft(s);
+    return;
+  }
+
   if (s.typeName === "elderlyGroup") {
     drawElderlyGroup(s);
     return;
@@ -2112,7 +2588,7 @@ function drawHud() {
   );
 
   ctx.fillText(
-    "DUIKEN: " + player.divesLeft,
+    "DUIKEN: " + (player.divesLeft > 90 ? "∞" : player.divesLeft),
     x + padding,
     textY + lineHeight
   );
@@ -2133,27 +2609,101 @@ function drawLegend() {
   ctx.font = "11px monospace";
 
   ctx.fillStyle = "#35C759";
-  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 525);
+  ctx.fillText("GROEN gewone zwemmer", HUD_X + 5, 505);
 
   ctx.fillStyle = "#1976D2";
-  ctx.fillText("BLAUW langzamer", HUD_X + 5, 545);
+  ctx.fillText("BLAUW langzamer", HUD_X + 5, 523);
+
+  ctx.fillStyle = "#C0CA33";
+  ctx.fillText("LIME snellere zwemmer", HUD_X + 5, 541);
 
   ctx.fillStyle = "#00BCD4";
-  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 565);
+  ctx.fillText("CYAN vriendelijke crawl", HUD_X + 5, 559);
 
   ctx.fillStyle = "#111111";
-  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 585);
+  ctx.fillText("ZWART onvriendelijke crawl", HUD_X + 5, 577);
+
+  ctx.fillStyle = "#CE93D8";
+  ctx.fillText("LILA bejaarde (alleen)", HUD_X + 5, 595);
 
   ctx.fillStyle = "#B06AD9";
-  ctx.fillText("PAARS bejaarden, 2 vakken", HUD_X + 5, 605);
+  ctx.fillText("PAARS bejaarden-groep, breed", HUD_X + 5, 613);
+
+  ctx.fillStyle = "#FF7043";
+  ctx.fillText("ORANJEROOD bommetje", HUD_X + 5, 631);
+
+  ctx.fillStyle = "#8D6E63";
+  ctx.fillText("BRUIN vlot met kinderen", HUD_X + 5, 649);
 
   ctx.fillStyle = "#ff9800";
-  ctx.fillText("ORANJE = zwemmer-boete", HUD_X + 5, 625);
+  ctx.fillText("ORANJE = zwemmer-boete", HUD_X + 5, 667);
 
   ctx.fillStyle = "white";
-  ctx.fillText("Level 1-9: 3 subbanen", HUD_X + 5, 655);
-  ctx.fillText("Vanaf level 10: 5 subbanen", HUD_X + 5, 675);
-  ctx.fillText("SPACE zwemmen = duik", HUD_X + 5, 695);
+  ctx.fillText("SPACE = springen / duiken", HUD_X + 5, 691);
+}
+
+function drawIntroGraphic(typeName, cx, cy) {
+  ctx.save();
+
+  if (typeName === "boss") {
+    ctx.fillStyle = "#111111";
+    for (let i = 0; i < 6; i++) {
+      ctx.fillRect(cx - 96 + i * 32, cy - 12, 22, 24);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (typeName === "raft") {
+    const w = 70, h = 38;
+    ctx.fillStyle = "#8D6E63";
+    ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+    ctx.strokeStyle = "#5D4037";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+    ctx.fillStyle = "#FFB74D";
+    ctx.fillRect(cx - 16, cy - 8, 14, 14);
+    ctx.fillRect(cx + 4, cy - 8, 14, 14);
+    ctx.restore();
+    return;
+  }
+
+  if (typeName === "bomb") {
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, 26, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "#FF7043";
+    ctx.fillRect(cx - 9, cy - 9, 18, 18);
+    ctx.restore();
+    return;
+  }
+
+  const type = SWIMMER_TYPES[typeName];
+  if (!type) {
+    ctx.restore();
+    return;
+  }
+
+  const size = 26;
+
+  function block(bx) {
+    ctx.fillStyle = "black";
+    ctx.fillRect(bx + size / 2 - 4, cy - size / 2 - 6, 8, 6); // kopje
+    ctx.fillStyle = type.color;
+    ctx.fillRect(bx, cy - size / 2, size, size);
+    ctx.fillStyle = type.stripe;
+    ctx.fillRect(bx + 4, cy - 3, size - 8, 5);
+  }
+
+  if (typeName === "elderlyGroup") {
+    block(cx - size - 2);
+    block(cx + 2);
+  } else {
+    block(cx - size / 2);
+  }
+
+  ctx.restore();
 }
 
 function drawOverlay() {
@@ -2162,25 +2712,50 @@ function drawOverlay() {
   const progress = overlay.timer / overlay.duration;
   const scale = 1 + (1 - progress) * 0.12;
 
-  ctx.fillStyle = "rgba(0,0,0,0.68)";
+  ctx.fillStyle = "rgba(0,0,0,0.72)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.save();
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.scale(scale, scale);
-
-  ctx.fillStyle = "white";
-  ctx.font = "bold 42px monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(overlay.text, 0, 0);
 
-  if (!gameFinished && overlay.text.indexOf("CLEARED") >= 0) {
-    ctx.font = "18px monospace";
-    ctx.fillText("Volgend level start zo", 0, 48);
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+
+  const hasIntro = overlay.typeName || overlay.lines;
+  const titleY = hasIntro ? cy - 120 : cy;
+
+  // Titel
+  ctx.save();
+  ctx.translate(cx, titleY);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "white";
+  ctx.font = "bold 40px monospace";
+  ctx.fillText(overlay.text, 0, 0);
+  ctx.restore();
+
+  // Plaatje van het nieuwe type
+  if (overlay.typeName) {
+    drawIntroGraphic(overlay.typeName, cx, cy - 20);
   }
 
-  ctx.restore();
+  // Uitleg-regels
+  if (overlay.lines) {
+    ctx.fillStyle = "white";
+    ctx.font = "20px monospace";
+    overlay.lines.forEach((line, i) => {
+      ctx.fillText(line, cx, cy + 70 + i * 30);
+    });
+  }
+
+  if (!gameFinished && overlay.text.indexOf("GEHAALD") >= 0) {
+    ctx.font = "18px monospace";
+    ctx.fillStyle = "white";
+    ctx.fillText("Volgend level start zo", cx, cy + 48);
+  }
+
+  // herstel standaard tekstuitlijning voor de rest van de tekeningen
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 function draw() {
@@ -2301,6 +2876,7 @@ document.addEventListener("keydown", e => {
 });
 
 // START
+showLevelIntro(1);
 loop();
 </script>
 
