@@ -1,0 +1,6 @@
+# Playtest-artefacten (Playwright MCP output + screenshots van de playtester)
+.playwright-mcp/
+*.png
+
+# Node
+node_modules/
