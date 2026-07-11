@@ -7,15 +7,14 @@
   <style>
     body {
       margin: 0;
-      background: #b7e3f7;
+      background: #1a5c1a;
       font-family: Arial, sans-serif;
     }
 
     canvas {
       display: block;
-      margin: auto;
-      background: #b7e3f7;
-      /* ✅ schaal mee met het scherm (mobiel), max de echte grootte */
+      margin: 0 auto;
+      /* desktop: max de echte breedte */
       width: min(100vw, 720px);
       height: auto;
       touch-action: manipulation;
@@ -26,9 +25,11 @@
       display: none;
       flex-direction: column;
       gap: 6px;
-      padding: 8px 8px 28px;
+      padding: 6px 8px env(safe-area-inset-bottom, 12px);
       max-width: 720px;
       margin: 0 auto;
+      width: 100%;
+      box-sizing: border-box;
       background: #111;
       user-select: none;
       -webkit-user-select: none;
@@ -41,8 +42,8 @@
     }
 
     #touch-controls button {
-      font: bold 20px monospace;
-      padding: 14px 0;
+      font: bold 18px monospace;
+      padding: 12px 0;
       background: #2a2a2a;
       color: white;
       border: 2px solid #555;
@@ -51,14 +52,12 @@
       flex: 1;
     }
 
-    /* ◀ en ▶ zijn breed zodat ze bij de duimen zitten */
-    .btn-nav { flex: 2; font-size: 26px; }
+    /* ◀ en ▶ bij de duimen */
+    .btn-nav  { flex: 1.2; font-size: 24px; }
 
-    /* ruimte tussen ◀ en ▶ op de middelste rij */
-    .btn-spacer { flex: 3; background: transparent; border-color: transparent; }
-
-    /* lange duikbalk onderaan */
-    .btn-dive { font-size: 18px; letter-spacing: 1px; background: #003C8F; border-color: #4FC3F7; }
+    /* DUIK/START in het midden, tussen de pijltjes */
+    .btn-dive { flex: 2; font-size: 15px; letter-spacing: 1px;
+                background: #003C8F; border-color: #4FC3F7; }
 
     /* B knop */
     .btn-twist { background: #6a1f6a; border-color: #CE93D8; }
@@ -68,12 +67,34 @@
       color: black;
       border-color: #fff;
     }
-
-    .btn-dive:active { background: #1565C0; }
+    .btn-dive:active { background: #1565C0; color: white; }
 
     @media (hover: none), (pointer: coarse) {
+      body {
+        /* alles in één kolom, overflow verbergt de lege ruimte eronder */
+        height: 100dvh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        background: #111;
+      }
+
+      canvas {
+        /* schaal canvas zodat canvas + ~145px knoppen precies passen */
+        width: min(100vw, 720px, calc((100dvh - 145px) * 0.72));
+        flex-shrink: 0;
+      }
+
       #touch-controls {
         display: flex;
+        flex: 1;
+        justify-content: flex-end;
+        width: 100%;
+        max-width: 100vw;
+        margin: 0;
+        /* ruimte voor home-bar op notch-telefoons */
+        padding-bottom: max(env(safe-area-inset-bottom, 0px), 6px);
       }
     }
   </style>
@@ -90,15 +111,11 @@
     <button data-key="KeyB"      aria-label="Russian Ball Twist" class="btn-twist">B</button>
     <button data-key="ArrowUp"   aria-label="sneller">Sneller</button>
   </div>
-  <!-- rij 2: links / rechts bij de duimen -->
+  <!-- rij 2: ◀  DUIK/START  ▶ -->
   <div class="touch-row">
-    <button data-key="ArrowLeft"  aria-label="baan naar links"   class="btn-nav">◀</button>
-    <button disabled               aria-hidden="true"             class="btn-spacer"></button>
-    <button data-key="ArrowRight" aria-label="baan naar rechts"  class="btn-nav">▶</button>
-  </div>
-  <!-- rij 3: lange duikbalk -->
-  <div class="touch-row">
-    <button data-key="Space" aria-label="start / duik" class="btn-dive">▼ DUIK / START ▼</button>
+    <button data-key="ArrowLeft"  aria-label="baan naar links"  class="btn-nav">◀</button>
+    <button data-key="Space"      aria-label="start / duik"     class="btn-dive">DUIK / START</button>
+    <button data-key="ArrowRight" aria-label="baan naar rechts" class="btn-nav">▶</button>
   </div>
 </div>
 
