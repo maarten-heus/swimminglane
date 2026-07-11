@@ -24,36 +24,52 @@
     /* ✅ touch-knoppen: alleen zichtbaar op touch-apparaten */
     #touch-controls {
       display: none;
-      justify-content: center;
-      gap: 8px;
-      padding: 10px 8px 24px;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 8px 28px;
       max-width: 720px;
       margin: 0 auto;
+      background: #111;
       user-select: none;
       -webkit-user-select: none;
     }
 
-    #touch-controls button {
-      font: bold 22px monospace;
-      flex: 1;
-      max-width: 84px;
-      padding: 16px 0;
-      background: #222;
-      color: white;
-      border: 3px solid #555;
-      border-radius: 10px;
-      touch-action: manipulation;
+    .touch-row {
+      display: flex;
+      gap: 6px;
+      width: 100%;
     }
 
-    #touch-controls button.wide {
-      max-width: 150px;
-      font-size: 16px;
+    #touch-controls button {
+      font: bold 20px monospace;
+      padding: 14px 0;
+      background: #2a2a2a;
+      color: white;
+      border: 2px solid #555;
+      border-radius: 10px;
+      touch-action: manipulation;
+      flex: 1;
     }
+
+    /* ◀ en ▶ zijn breed zodat ze bij de duimen zitten */
+    .btn-nav { flex: 2; font-size: 26px; }
+
+    /* ruimte tussen ◀ en ▶ op de middelste rij */
+    .btn-spacer { flex: 3; background: transparent; border-color: transparent; }
+
+    /* lange duikbalk onderaan */
+    .btn-dive { font-size: 18px; letter-spacing: 1px; background: #003C8F; border-color: #4FC3F7; }
+
+    /* B knop */
+    .btn-twist { background: #6a1f6a; border-color: #CE93D8; }
 
     #touch-controls button:active {
       background: #4FC3F7;
       color: black;
+      border-color: #fff;
     }
+
+    .btn-dive:active { background: #1565C0; }
 
     @media (hover: none), (pointer: coarse) {
       #touch-controls {
@@ -68,12 +84,22 @@
 
 <!-- ✅ touch-besturing voor mobiel (vuurt dezelfde toets-events af) -->
 <div id="touch-controls">
-  <button data-key="ArrowLeft" aria-label="baan naar links">◀</button>
-  <button data-key="ArrowRight" aria-label="baan naar rechts">▶</button>
-  <button data-key="ArrowUp" aria-label="sneller">▲</button>
-  <button data-key="ArrowDown" aria-label="langzamer">▼</button>
-  <button data-key="Space" class="wide" aria-label="start / duik">DUIK / START</button>
-  <button data-key="KeyB" aria-label="Russian Ball Twist">B</button>
+  <!-- rij 1: snelheid + Ball Twist -->
+  <div class="touch-row">
+    <button data-key="ArrowDown" aria-label="langzamer">Langzamer</button>
+    <button data-key="KeyB"      aria-label="Russian Ball Twist" class="btn-twist">B</button>
+    <button data-key="ArrowUp"   aria-label="sneller">Sneller</button>
+  </div>
+  <!-- rij 2: links / rechts bij de duimen -->
+  <div class="touch-row">
+    <button data-key="ArrowLeft"  aria-label="baan naar links"   class="btn-nav">◀</button>
+    <button disabled               aria-hidden="true"             class="btn-spacer"></button>
+    <button data-key="ArrowRight" aria-label="baan naar rechts"  class="btn-nav">▶</button>
+  </div>
+  <!-- rij 3: lange duikbalk -->
+  <div class="touch-row">
+    <button data-key="Space" aria-label="start / duik" class="btn-dive">▼ DUIK / START ▼</button>
+  </div>
 </div>
 
 <script>
@@ -2497,29 +2523,163 @@ function update() {
 // DRAWING
 // =====================================================
 
-function drawDeck() {
-  ctx.fillStyle = "#e8d4a2";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+// --- omgevings-hulpfuncties ---
 
-  ctx.strokeStyle = "#d2bd86";
+function drawGrassTuft(x, y, size) {
+  ctx.fillStyle = "#4CAF50";
+  ctx.beginPath();
+  ctx.ellipse(x, y, size * 1.1, size * 0.55, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#66BB6A";
+  ctx.beginPath();
+  ctx.ellipse(x - size * 0.3, y - size * 0.2, size * 0.5, size * 0.4, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x + size * 0.3, y - size * 0.2, size * 0.5, size * 0.4, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawParasol(x, y, color) {
+  // paal
+  ctx.strokeStyle = "#8D6E63";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x, y + 4);
+  ctx.lineTo(x, y - 30);
+  ctx.stroke();
+  // kap
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(x, y - 30, 22, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.15)";
+  ctx.beginPath();
+  ctx.ellipse(x, y - 28, 22, 4, 0, 0, Math.PI);
+  ctx.fill();
+  // tafel + 2 stoelen
+  ctx.fillStyle = "#BCAAA4";
+  ctx.fillRect(x - 14, y, 28, 6);   // tafelblad
+  ctx.fillStyle = "#A1887F";
+  ctx.fillRect(x - 12, y - 8, 8, 8); // stoel L
+  ctx.fillRect(x + 4,  y - 8, 8, 8); // stoel R
+}
+
+function drawKleedhokjes(x, y) {
+  const W = 80, H = 60, CABINS = 3;
+  const cw = W / CABINS;
+
+  // muur
+  ctx.fillStyle = "#EFEBE9";
+  ctx.fillRect(x, y, W, H);
+  ctx.strokeStyle = "#8D6E63";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, W, H);
+
+  // scheidingswanden
+  ctx.strokeStyle = "#BCAAA4";
   ctx.lineWidth = 1;
-
-  for (let y = 0; y < canvas.height; y += 28) {
+  for (let i = 1; i < CABINS; i++) {
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(canvas.width, y);
+    ctx.moveTo(x + i * cw, y);
+    ctx.lineTo(x + i * cw, y + H);
     ctx.stroke();
   }
 
-  ctx.fillStyle = "#8D6E63";
-  ctx.fillRect(GATE.x - 30, GATE.y - 35, 60, 70);
+  // deurtjes (onderste helft van elke cabin)
+  for (let i = 0; i < CABINS; i++) {
+    ctx.fillStyle = "#8D6E63";
+    ctx.fillRect(x + i * cw + 5, y + H * 0.45, cw - 10, H * 0.5);
+  }
 
-  ctx.fillStyle = "white";
-  ctx.font = "12px monospace";
-  ctx.fillText("KASSA", GATE.x - 20, GATE.y + 4);
+  // label
+  ctx.fillStyle = "#5D4037";
+  ctx.font = "bold 9px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("KLEEDKAMERS", x + W / 2, y - 5);
+  ctx.textAlign = "left";
+}
 
+function drawTiledPath(x1, y1, x2, y2, width) {
+  // lichtgekleurde tegels langs het looppad
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const nx = -dy / len, ny = dx / len; // normaal loodrecht op het pad
+
+  ctx.fillStyle = "#F5F0E8";
+  ctx.save();
+  ctx.translate(x1, y1);
+  ctx.rotate(Math.atan2(dy, dx));
+  ctx.fillRect(0, -width / 2, len, width);
+
+  // tegelnaden
+  ctx.strokeStyle = "#DDD5C0";
+  ctx.lineWidth = 1;
+  const tileSize = 20;
+  for (let t = 0; t < len; t += tileSize) {
+    ctx.beginPath(); ctx.moveTo(t, -width / 2); ctx.lineTo(t, width / 2); ctx.stroke();
+  }
+  for (let w = -width / 2; w < width / 2; w += tileSize) {
+    ctx.beginPath(); ctx.moveTo(0, w); ctx.lineTo(len, w); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawDeck() {
+  // =============================================
+  // 1. GRAS — de achtergrond buiten het complex
+  // =============================================
+  ctx.fillStyle = "#388E3C";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // wat lichte grasstrepen voor structuur
+  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  for (let y = 0; y < canvas.height; y += 18) {
+    ctx.fillRect(0, y, canvas.width, 9);
+  }
+
+  // =============================================
+  // 2. BETEGELD ZWEMBAD-DEK (het vlak rond het bad)
+  // =============================================
+  const deckL = POOL_X - DECK_MARGIN - 10;
+  const deckT = POOL_Y - DECK_MARGIN - 10;
+  const deckR = RIGHT_WALKWAY_X + 20;
+  const deckB = POOL_Y + POOL_HEIGHT + DECK_MARGIN + 10;
+
+  ctx.fillStyle = "#E8D4A2";
+  ctx.fillRect(deckL, deckT, deckR - deckL, deckB - deckT);
+
+  // tegelnaden dek
+  ctx.strokeStyle = "#D2BD86";
+  ctx.lineWidth = 1;
+  for (let y = deckT; y < deckB; y += 28) {
+    ctx.beginPath(); ctx.moveTo(deckL, y); ctx.lineTo(deckR, y); ctx.stroke();
+  }
+  for (let x = deckL; x < deckR; x += 28) {
+    ctx.beginPath(); ctx.moveTo(x, deckT); ctx.lineTo(x, deckB); ctx.stroke();
+  }
+
+  // rand van het dek
+  ctx.strokeStyle = "#B8A070";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(deckL, deckT, deckR - deckL, deckB - deckT);
+
+  // =============================================
+  // 3. TEGEL-PADEN (looppad voor zwemmers)
+  // =============================================
+  // pad van kassa → kleedhokjes → rechtse rand van het dek
+  const CABIN_X = GATE.x - 130;
+  const CABIN_Y = GATE.y - 30;
+  const PATH_W = 22;
+
+  drawTiledPath(GATE.x - 30, GATE.y, CABIN_X + 80, GATE.y, PATH_W);
+  drawTiledPath(CABIN_X,     GATE.y, deckR,          GATE.y, PATH_W);
+
+  // =============================================
+  // 4. LOOPPAD LANGS DE RAND VAN HET ZWEMBAD
+  // =============================================
   ctx.strokeStyle = "rgba(120,90,50,0.35)";
   ctx.lineWidth = 3;
+  ctx.setLineDash([8, 6]);
 
   ctx.beginPath();
   ctx.moveTo(RIGHT_WALKWAY_X, TOP_WALKWAY_Y);
@@ -2535,6 +2695,52 @@ function drawDeck() {
   ctx.moveTo(POOL_X, BOTTOM_WALKWAY_Y);
   ctx.lineTo(RIGHT_WALKWAY_X, BOTTOM_WALKWAY_Y);
   ctx.stroke();
+
+  ctx.setLineDash([]);
+
+  // =============================================
+  // 5. KLEEDHOKJES (boven het looppad, ingang naar het pad toe)
+  // =============================================
+  drawKleedhokjes(CABIN_X, GATE.y - 75);
+
+  // =============================================
+  // 6. KASSA
+  // =============================================
+  ctx.fillStyle = "#6D4C41";
+  ctx.fillRect(GATE.x - 32, GATE.y - 38, 64, 76);
+  ctx.fillStyle = "#8D6E63";
+  ctx.fillRect(GATE.x - 28, GATE.y - 34, 56, 68);
+
+  // luifel
+  ctx.fillStyle = "#E53935";
+  for (let i = 0; i < 4; i++) {
+    ctx.fillRect(GATE.x - 28 + i * 14, GATE.y - 42, 12, 10);
+  }
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 9px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("KASSA", GATE.x, GATE.y + 4);
+  ctx.fillText("€", GATE.x, GATE.y + 18);
+  ctx.textAlign = "left";
+
+  // =============================================
+  // 7. PARASOLS BOVEN HET BAD (voor drawPool aanroep)
+  // =============================================
+  // boven-strip: deckT=46 .. POOL_Y=90 → parasols met voet op y≈80
+  drawParasol(POOL_X + 70,  POOL_Y - 12, "#FF7043");  // oranje links-boven
+  drawParasol(POOL_X + 240, POOL_Y - 12, "#42A5F5");  // blauw midden-boven
+
+  // =============================================
+  // 8. GRASTOEFJES EN PLANTJES LANGS DE RAND
+  // =============================================
+  const tufts = [
+    [20, 50], [680, 50], [20, 200], [680, 200],
+    [20, 700], [680, 700], [20, 850], [680, 850],
+    [350, 20], [350, 960], [150, 20], [550, 20],
+    [150, 960], [550, 960],
+  ];
+  tufts.forEach(([tx, ty]) => drawGrassTuft(tx, ty, 14));
 }
 
 function drawPool() {
@@ -2978,51 +3184,6 @@ function drawHud() {
 }
 
 
-function drawLegend() {
-  // ✅ iets naar rechts zodat het looppad langs het bad er niet doorheen loopt
-  const lx = HUD_X + 30;
-
-  ctx.font = "11px monospace";
-
-  ctx.fillStyle = PLAYER_COLOR;
-  ctx.fillText("ROOD (gele rand) = JIJ", lx, 487);
-
-  ctx.fillStyle = "#35C759";
-  ctx.fillText("GROEN gewone zwemmer", lx, 505);
-
-  ctx.fillStyle = "#1976D2";
-  ctx.fillText("BLAUW langzamer", lx, 523);
-
-  ctx.fillStyle = "#C0CA33";
-  ctx.fillText("LIME snellere zwemmer", lx, 541);
-
-  ctx.fillStyle = "#00BCD4";
-  ctx.fillText("CYAN vriendelijke crawl", lx, 559);
-
-  ctx.fillStyle = "#111111";
-  ctx.fillText("ZWART onvriendelijke crawl", lx, 577);
-
-  ctx.fillStyle = "#CE93D8";
-  ctx.fillText("LILA bejaarde (alleen)", lx, 595);
-
-  ctx.fillStyle = "#B06AD9";
-  ctx.fillText("PAARS bejaarden-groep, breed", lx, 613);
-
-  ctx.fillStyle = "#FF7043";
-  ctx.fillText("ORANJEROOD bommetje", lx, 631);
-
-  ctx.fillStyle = "#8D6E63";
-  ctx.fillText("BRUIN vlot met kinderen", lx, 649);
-
-  ctx.fillStyle = "#ff9800";
-  ctx.fillText("ORANJE = zwemmer-boete", lx, 667);
-
-  ctx.fillStyle = "white";
-  ctx.fillText("SPACE = springen / duiken", lx, 691);
-
-  ctx.fillStyle = "#7CFC00";
-  ctx.fillText("B = Russian Ball Twist (1x!)", lx, 709);
-}
 
 function drawIntroGraphic(typeName, cx, cy) {
   ctx.save();
@@ -3421,11 +3582,19 @@ function drawFightClouds() {
   ctx.globalAlpha = 1;
 }
 
+function drawBelowPoolDecorations() {
+  // parasols ONDER het bad — ná drawPool() tekenen zodat het bad er
+  // niet overheen geschreven wordt; de pool border-rect loopt tot y≈594
+  drawParasol(POOL_X + 70,  POOL_Y + POOL_HEIGHT + 38, "#66BB6A");
+  drawParasol(POOL_X + 240, POOL_Y + POOL_HEIGHT + 38, "#FFD600");
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawDeck();
   drawPool();
+  drawBelowPoolDecorations();
   drawLadders();
 
   swimmers.forEach(drawSwimmer);
@@ -3435,7 +3604,6 @@ function draw() {
   drawFightClouds();
 
   drawHud();
-  drawLegend();
 
   drawOverlay();
 }
