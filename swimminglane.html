@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Zwembad Game</title>
   <style>
     body {
@@ -14,12 +15,66 @@
       display: block;
       margin: auto;
       background: #b7e3f7;
+      /* ✅ schaal mee met het scherm (mobiel), max de echte grootte */
+      width: min(100vw, 720px);
+      height: auto;
+      touch-action: manipulation;
+    }
+
+    /* ✅ touch-knoppen: alleen zichtbaar op touch-apparaten */
+    #touch-controls {
+      display: none;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 8px 24px;
+      max-width: 720px;
+      margin: 0 auto;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #touch-controls button {
+      font: bold 22px monospace;
+      flex: 1;
+      max-width: 84px;
+      padding: 16px 0;
+      background: #222;
+      color: white;
+      border: 3px solid #555;
+      border-radius: 10px;
+      touch-action: manipulation;
+    }
+
+    #touch-controls button.wide {
+      max-width: 150px;
+      font-size: 16px;
+    }
+
+    #touch-controls button:active {
+      background: #4FC3F7;
+      color: black;
+    }
+
+    @media (hover: none), (pointer: coarse) {
+      #touch-controls {
+        display: flex;
+      }
     }
   </style>
 </head>
 <body>
 
 <canvas id="game" width="720" height="1000"></canvas>
+
+<!-- ✅ touch-besturing voor mobiel (vuurt dezelfde toets-events af) -->
+<div id="touch-controls">
+  <button data-key="ArrowLeft" aria-label="baan naar links">◀</button>
+  <button data-key="ArrowRight" aria-label="baan naar rechts">▶</button>
+  <button data-key="ArrowUp" aria-label="sneller">▲</button>
+  <button data-key="ArrowDown" aria-label="langzamer">▼</button>
+  <button data-key="Space" class="wide" aria-label="start / duik">DUIK / START</button>
+  <button data-key="KeyB" aria-label="Russian Ball Twist">B</button>
+</div>
 
 <script>
 const canvas = document.getElementById("game");
@@ -3516,6 +3571,34 @@ document.addEventListener("keydown", e => {
     player.cruiseSpeed = clamp(player.cruiseSpeed, player.minSpeed, player.maxSpeed);
     player.speedY = (player.speedY < 0 ? -1 : 1) * player.cruiseSpeed;
   }
+});
+
+// =====================================================
+// TOUCH CONTROLS (mobiel)
+// =====================================================
+
+// de knoppen vuren dezelfde keydown-events af als het toetsenbord,
+// dus alle spellogica (skip, springen, duiken, retry) werkt vanzelf
+const TOUCH_KEYMAP = {
+  ArrowLeft:  { key: "ArrowLeft",  code: "ArrowLeft" },
+  ArrowRight: { key: "ArrowRight", code: "ArrowRight" },
+  ArrowUp:    { key: "ArrowUp",    code: "ArrowUp" },
+  ArrowDown:  { key: "ArrowDown",  code: "ArrowDown" },
+  Space:      { key: " ",          code: "Space" },
+  KeyB:       { key: "b",          code: "KeyB" }
+};
+
+document.querySelectorAll("#touch-controls button").forEach(btn => {
+  btn.addEventListener("pointerdown", e => {
+    e.preventDefault(); // geen scroll/zoom/focus op de knop
+
+    const m = TOUCH_KEYMAP[btn.dataset.key];
+    if (!m) return;
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: m.key, code: m.code, bubbles: true })
+    );
+  });
 });
 
 // =====================================================
