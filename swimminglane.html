@@ -119,6 +119,9 @@ let forcedNewTypeCount = 0;
 // botsings-effect (stofwolk met vuisten)
 let fightClouds = [];
 
+// "Russian Ball Twist": 1x per hele game bruikbaar
+let russianBallTwistUsed = false;
+
 // =====================================================
 // OVERLAY / LEVEL SYSTEM
 // =====================================================
@@ -251,19 +254,19 @@ function checkLevelProgress() {
 
 const LEVEL_INTROS = {
   0:  {
-        title: "WELKOM IN HET ZWEMBAD",
-        typeName: "ordinary",
+        title: "OEFENBAAN",
         duration: 900,
         lines: [
-          "←  →   wissel van baan",
-          "↑ sneller    ↓ langzamer",
-          "SPATIE   springen / duiken",
-          "Raak de witte lijnen niet aan!",
+          "Even oefenen — nog geen andere zwemmers",
           "",
-          "Geniet van de rust —",
-          "er komen zo meer zwemmers bij!",
+          "←  →     wissel van baan",
+          "↑ sneller       ↓ langzamer",
+          "SPATIE   springen in het water",
           "",
-          "Zwem 3 baantjes  ( SPATIE = start )"
+          "Duik (SPATIE) om een witte lijn",
+          "over te steken — anders krijg je straf!",
+          "",
+          "Zwem 3 baantjes   ( SPATIE = start )"
         ]
       },
   1:  { title: "LEVEL 1",  typeName: "ordinary",        lines: ["Gewone zwemmers", "Net zo snel als jij"] },
@@ -335,9 +338,9 @@ function showLevelIntro(lvl) {
 // =====================================================
 
 function getLevelConfig(level) {
-  // introbaan: rustig beginnen, daarna komen er zwemmers bij
+  // introbaan: puur oefenen, geen andere zwemmers
   if (level === 0) {
-    return { maxSwimmers: 6, startSwimmers: 0 };
+    return { maxSwimmers: 0, startSwimmers: 0 };
   }
 
   // ✅ direct goed gevuld, daarna geleidelijk drukker
@@ -810,6 +813,77 @@ function updateDive() {
   if (player.diveTimer <= 0) {
     player.isDiving = false;
   }
+}
+
+// =====================================================
+// RUSSIAN BALL TWIST (eenmalige special move)
+// =====================================================
+
+// vind de dichtstbijzijnde zwemmer bij een dreigende botsing
+function findBallTwistTarget() {
+  const pSub = Math.round(player.globalSubLane);
+  const pcy = player.y + PLAYER_SIZE / 2;
+
+  let best = null;
+  let bestDist = Infinity;
+
+  swimmers.forEach(s => {
+    if (s.state !== "swimming") return;
+    if (s.typeName === "bomb" || s.typeName === "raft") return;
+
+    const parts = getLogicalSwimmerParts(s);
+    let near = false;
+    let dy = Infinity;
+
+    parts.forEach(part => {
+      if (Math.abs(part.globalSubLane - pSub) <= 1) {
+        near = true;
+        const d = Math.abs((part.y + part.h / 2) - pcy);
+        if (d < dy) dy = d;
+      }
+    });
+
+    if (!near || dy > 150) return;
+
+    if (dy < bestDist) {
+      bestDist = dy;
+      best = s;
+    }
+  });
+
+  return best;
+}
+
+function invokeRussianBallTwist() {
+  if (russianBallTwistUsed) return;
+  if (gamePaused || gameFinished) return;
+  if (!player.swimming) return;
+
+  const target = findBallTwistTarget();
+  if (!target) return; // alleen als er echt een botsing dreigt
+
+  russianBallTwistUsed = true;
+
+  overlay = {
+    text: "RUSSIAN BALL TWIST",
+    comic: true,
+    timer: 280,
+    duration: 280,
+    onDone: () => {
+      gamePaused = false;
+
+      // de geraakte zwemmer verlaat het bad via de uitgang, met een wolk erbij
+      if (target && !target.removeMe) {
+        target.markedForExit = true;
+        target.beatenEscort = true;
+        target.escortTimer = 1;
+        startExit(target);
+        spawnFightCloud(target.x + SWIMMER_SIZE / 2, target.y + SWIMMER_SIZE / 2);
+      }
+    }
+  };
+
+  gamePaused = true;
 }
 
 // =====================================================
@@ -1671,6 +1745,7 @@ function spawnPopulationEvent() {
 
   if (gameFinished) return;
   if (gamePaused) return;        // niet spawnen tijdens level-intro
+  if (level === 0) return;        // oefenbaan: geen andere zwemmers
   if (level >= MAX_LEVEL) return; // eindbaas: geen losse zwemmers
 
   const max = getMaxSwimmers();
@@ -2017,6 +2092,15 @@ function updateSwimmerSpeedPenalty(s) {
 
 function updateSwimmerMovement() {
   swimmers.forEach(s => {
+
+    // verslagen zwemmer krijgt onderweg naar de uitgang een stofwolk mee
+    if (s.beatenEscort) {
+      s.escortTimer--;
+      if (s.escortTimer <= 0) {
+        spawnFightCloud(s.x + SWIMMER_SIZE / 2, s.y + SWIMMER_SIZE / 2);
+        s.escortTimer = 12;
+      }
+    }
 
     if (s.state === "bombApproach" || s.state === "bombJump" || s.state === "bombFloat") {
       updateBomb(s);
@@ -2748,6 +2832,14 @@ function drawHud() {
     x + padding,
     textY + 2 * lineHeight
   );
+
+  // Russian Ball Twist (eenmalig)
+  ctx.fillStyle = russianBallTwistUsed ? "#888" : "#7CFC00";
+  ctx.fillText(
+    russianBallTwistUsed ? "TWIST: op" : "TWIST: [B]",
+    x + padding,
+    textY + 3 * lineHeight
+  );
 }
 
 
@@ -2786,6 +2878,9 @@ function drawLegend() {
 
   ctx.fillStyle = "white";
   ctx.fillText("SPACE = springen / duiken", HUD_X + 5, 691);
+
+  ctx.fillStyle = "#7CFC00";
+  ctx.fillText("B = Russian Ball Twist (1x!)", HUD_X + 5, 709);
 }
 
 function drawIntroGraphic(typeName, cx, cy) {
@@ -2852,6 +2947,199 @@ function drawIntroGraphic(typeName, cx, cy) {
   ctx.restore();
 }
 
+// =====================================================
+// RUSSIAN BALL TWIST — COMIC OVERLAY
+// =====================================================
+
+function drawComicFighter(x, y, color, punch, knockedOut) {
+  const s = 18;
+
+  ctx.save();
+  ctx.translate(x, y);
+  if (knockedOut) ctx.rotate(0.6);
+
+  ctx.fillStyle = color;
+  ctx.fillRect(-s / 2, -s / 2, s, s);
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(-s / 2, -s / 2, s, s);
+
+  // stotende vuist
+  ctx.fillStyle = "#ffcf9e";
+  const fx = punch ? s / 2 + 3 : 0;
+  const fy = punch ? -2 : -s / 2 - 7;
+  ctx.fillRect(fx - 3, fy - 3, 7, 7);
+  ctx.strokeRect(fx - 3, fy - 3, 7, 7);
+
+  ctx.restore();
+
+  if (knockedOut) {
+    ctx.fillStyle = "#ffe23d";
+    for (let i = 0; i < 3; i++) {
+      const a = i * 2.1;
+      const sx = x + Math.cos(a) * 15;
+      const sy = y - 18 + Math.sin(a) * 6;
+      ctx.fillRect(sx - 1, sy - 3, 2, 6);
+      ctx.fillRect(sx - 3, sy - 1, 6, 2);
+    }
+  }
+}
+
+// achtergrond + schuine actielijnen van een comic-paneel
+function drawComicFrame(px, py, w, h) {
+  ctx.fillStyle = "#fdf5e6";
+  ctx.fillRect(px, py, w, h);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px, py, w, h);
+  ctx.clip();
+  ctx.strokeStyle = "rgba(0,0,0,0.07)";
+  ctx.lineWidth = 3;
+  for (let i = -h; i < w; i += 14) {
+    ctx.beginPath();
+    ctx.moveTo(px + i, py);
+    ctx.lineTo(px + i + h, py + h);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawComicBorder(px, py, w, h) {
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(px, py, w, h);
+}
+
+function drawJuggleBall(bx, by, r, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(bx, by, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // glans
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.beginPath();
+  ctx.arc(bx - r * 0.35, by - r * 0.35, r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// paneel met de twee ballen (kleuren links/rechts instelbaar)
+function drawBallsPanel(px, py, w, h, leftColor, rightColor) {
+  drawComicFrame(px, py, w, h);
+
+  const ballY = py + h * 0.42;
+  const lx = px + w * 0.30;
+  const rx = px + w * 0.70;
+  const r = 21;
+
+  // jongleer-boog
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(lx, ballY);
+  ctx.quadraticCurveTo((lx + rx) / 2, ballY - 52, rx, ballY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  drawJuggleBall(lx, ballY, r, leftColor);
+  drawJuggleBall(rx, ballY, r, rightColor);
+
+  // twee jongleurs eronder (armen omhoog)
+  const jugY = py + h - 30;
+  drawComicFighter(px + w * 0.37, jugY, "#1E88E5", true, false);
+  drawComicFighter(px + w * 0.63, jugY, "#333333", true, false);
+
+  drawComicBorder(px, py, w, h);
+}
+
+// middenpaneel met grote comic-tekst "TWIST"
+function drawTwistPanel(px, py, w, h) {
+  drawComicFrame(px, py, w, h);
+
+  const cx = px + w / 2;
+  const cy = py + h / 2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // grote gele starburst
+  ctx.fillStyle = "#ffd400";
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 3;
+  const spikes = 14;
+  const rO = Math.min(w, h) * 0.5;
+  const rI = rO * 0.62;
+  ctx.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const rr = (i % 2 === 0) ? rO : rI;
+    const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+    const bx = Math.cos(a) * rr;
+    const by = Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(bx, by);
+    else ctx.lineTo(bx, by);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // TWIST tekst, licht gekanteld
+  ctx.rotate(-0.12);
+  ctx.fillStyle = "#E53935";
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 4;
+  ctx.font = "bold 42px Impact, Arial Black, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.strokeText("TWIST", 0, 0);
+  ctx.fillText("TWIST", 0, 0);
+
+  ctx.restore();
+
+  drawComicBorder(px, py, w, h);
+}
+
+function drawComicOverlay() {
+  const cx = canvas.width / 2;
+
+  const RED = "#E53935";
+  const GREEN = "#2ecc40";
+
+  // titel
+  ctx.fillStyle = "#ffd400";
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 4;
+  ctx.font = "bold 46px Impact, Arial Black, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.strokeText("RUSSIAN BALL TWIST", cx, 250);
+  ctx.fillText("RUSSIAN BALL TWIST", cx, 250);
+
+  // 3 comic-panelen naast elkaar
+  const w = 200, h = 168, gap = 12;
+  const totalW = 3 * w + 2 * gap;
+  const px0 = (canvas.width - totalW) / 2;
+  const py = 330;
+
+  // 1: rood links, groen rechts
+  drawBallsPanel(px0, py, w, h, RED, GREEN);
+  // 2: grote "TWIST"
+  drawTwistPanel(px0 + (w + gap), py, w, h);
+  // 3: omgedraaid — groen links, rood rechts
+  drawBallsPanel(px0 + 2 * (w + gap), py, w, h, GREEN, RED);
+
+  // ondertitel
+  ctx.fillStyle = "white";
+  ctx.font = "20px monospace";
+  ctx.fillText("player invokes Russian Ball Twist", cx, py + h + 44);
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
 function drawOverlay() {
   if (!overlay) return;
 
@@ -2860,6 +3148,11 @@ function drawOverlay() {
 
   ctx.fillStyle = "rgba(0,0,0,0.72)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (overlay.comic) {
+    drawComicOverlay();
+    return;
+  }
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -3036,8 +3329,8 @@ setInterval(() => {
 // =====================================================
 
 document.addEventListener("keydown", e => {
-  // intro/leveloverzicht overslaan met SPATIE of ENTER
-  if (overlay && overlay.onDone && !gameFinished &&
+  // intro/leveloverzicht overslaan met SPATIE of ENTER (maar niet de comic)
+  if (overlay && overlay.onDone && !overlay.comic && !gameFinished &&
       (e.code === "Space" || e.code === "Enter")) {
     overlay.timer = 0; // dwingt onDone af in updateOverlay
     e.preventDefault();
@@ -3045,6 +3338,12 @@ document.addEventListener("keydown", e => {
   }
 
   if (gamePaused || gameFinished) return;
+
+  // Russian Ball Twist (1x per game)
+  if (e.key === "b" || e.key === "B") {
+    invokeRussianBallTwist();
+    return;
+  }
 
   if (e.key === "ArrowLeft") {
     movePlayerHorizontal(-1);
