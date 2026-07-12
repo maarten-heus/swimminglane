@@ -59,8 +59,8 @@
     .btn-dive { flex: 2; font-size: 15px; letter-spacing: 1px;
                 background: #003C8F; border-color: #4FC3F7; }
 
-    /* B knop */
-    .btn-twist { background: #6a1f6a; border-color: #CE93D8; }
+    /* geheime knop: ziet er gewoon uit (easter egg) */
+    .btn-secret { background: #2a2a2a; border-color: #555; font-size: 14px; color: #666; }
 
     #touch-controls button:active {
       background: #4FC3F7;
@@ -108,7 +108,7 @@
   <!-- rij 1: snelheid + Ball Twist -->
   <div class="touch-row">
     <button data-key="ArrowDown" aria-label="langzamer">Langzamer</button>
-    <button data-key="KeyB"      aria-label="Russian Ball Twist" class="btn-twist">B</button>
+    <button data-key="KeyB"      aria-label="speciaal" class="btn-secret">•••</button>
     <button data-key="ArrowUp"   aria-label="sneller">Sneller</button>
   </div>
   <!-- rij 2: ◀  DUIK/START  ▶ -->
@@ -160,6 +160,19 @@ const GATE = {
   x: 660,
   y: 390
 };
+
+const CABIN_X     = GATE.x - 130; // = 530, linker rand kleedhokjes
+const CABIN_Y     = GATE.y - 75;  // = 315, bovenkant kleedhokjes
+const CABIN_W     = 80;
+const CABIN_H     = 60;
+const CABIN_COUNT = 3;
+
+// handdoek-plekken op het gras (rechts van het dek, x > 514)
+const TOWEL_SPOTS = [
+  { x: 527, y: 358 }, { x: 560, y: 353 }, { x: 601, y: 360 }, { x: 639, y: 355 },
+  { x: 525, y: 421 }, { x: 561, y: 427 }, { x: 600, y: 419 }, { x: 640, y: 424 }
+];
+const TOWEL_COLORS = ["#FF6B6B", "#FFD93D", "#6BCB77", "#4D96FF", "#FF922B", "#CC5DE8"];
 
 const RIGHT_WALKWAY_X = POOL_X + POOL_WIDTH + DECK_MARGIN;
 const TOP_WALKWAY_Y = POOL_Y - DECK_MARGIN;
@@ -222,8 +235,13 @@ let forcedNewTypeCount = 0;
 // botsings-effect (stofwolk met vuisten)
 let fightClouds = [];
 
-// "Russian Ball Twist": 1x per hele game bruikbaar
+// "Russian Ball Twist": 1x per hele game bruikbaar, geheim: 3× dezelfde knop
 let russianBallTwistUsed = false;
+let bPressCount = 0;
+let bPressTimer = 0;
+
+// handdoeken die zwemmers op het gras hebben neergelegd
+let towels = [];
 
 // =====================================================
 // AGENT MODE (aansturing door een Claude-playtester)
@@ -278,6 +296,7 @@ function resetForNextLevel(oldSubLaneCount, newSubLaneCount) {
   hits = 0;
   hitCooldown = 0;
   timeLeft = 90;
+  towels = [];
 
   player.penaltyTimer = 0;
   player.color = PLAYER_COLOR;
@@ -592,7 +611,11 @@ const ACTIVE_POOL_STATES = new Set([
   "walkingIn",
   "waitingToJump",
   "goingToLadderToEnter",
-  "enteringByLadder"
+  "enteringByLadder",
+  "goingToCabin",
+  "inCabin",
+  "goingToTowelSpot",
+  "layingTowel"
 ]);
 
 function isPoolActiveSwimmer(s) {
@@ -1558,6 +1581,12 @@ function createSwimmer(randomPosition) {
   let enteringMember = 0;
   let enterTimer = 0;
 
+  // kleedhokje en handdoek-velden (alleen voor gewone zwemmers via de kassa)
+  const cw = CABIN_W / CABIN_COUNT;
+  const cabinNum = Math.floor(Math.random() * CABIN_COUNT);
+  const cabinCX = CABIN_X + cabinNum * cw + Math.floor(cw / 2) - Math.floor(SWIMMER_SIZE / 2);
+  let towelX = 0, towelY = 0, towelColor = null, towelAngle = 0;
+
   if (typeName === "elderlyGroup") {
     groupSize = Math.random() < 0.65 ? 2 : 3;
 
@@ -1578,8 +1607,31 @@ function createSwimmer(randomPosition) {
     } else {
       x = GATE.x;
       y = GATE.y;
-      state = "walkingIn";
-      path = buildEntryPath(jumpX, jumpY);
+
+      // 40% kans: zwemmer legt eerst handdoek neer op het gras
+      const wantsTowel = Math.random() < 0.4;
+      const freeSpot = wantsTowel
+        ? TOWEL_SPOTS.find(sp =>
+            !towels.some(t => Math.abs(t.x - sp.x) < 28 && Math.abs(t.y - sp.y) < 28) &&
+            !swimmers.some(s => s.state === "goingToTowelSpot" &&
+              Math.abs(s.towelX - sp.x) < 28 && Math.abs(s.towelY - sp.y) < 28)
+          )
+        : null;
+
+      if (freeSpot) {
+        towelX = freeSpot.x;
+        towelY = freeSpot.y;
+        towelColor = TOWEL_COLORS[Math.floor(Math.random() * TOWEL_COLORS.length)];
+        towelAngle = (Math.random() - 0.5) * 0.5;
+        state = "goingToTowelSpot";
+        path = [{ x: towelX, y: towelY }];
+      } else {
+        state = "goingToCabin";
+        path = [
+          { x: cabinCX, y: GATE.y },
+          { x: cabinCX, y: CABIN_Y + CABIN_H - 4 }
+        ];
+      }
     }
   }
 
@@ -1630,6 +1682,15 @@ function createSwimmer(randomPosition) {
     enterTimer,
 
     penaltyTimer: 0,
+
+    // kleedhokje + handdoek
+    cabinCX,
+    cabinTimer: 0,
+    towelX,
+    towelY,
+    towelColor,
+    towelAngle,
+    towelTimer: 0,
 
     // bommetje / vlot velden (defaults)
     vx: 0,
@@ -2026,6 +2087,48 @@ function updatePlayer() {
 // ENTRY / EXIT LOGIC
 // =====================================================
 
+function updateGoingToTowelSpot(s) {
+  const arrived = updatePathFollower(s);
+  if (arrived) {
+    towels.push({ x: s.x, y: s.y, color: s.towelColor, angle: s.towelAngle });
+    s.state = "layingTowel";
+    s.towelTimer = 35 + Math.floor(Math.random() * 25);
+  }
+}
+
+function updateLayingTowel(s) {
+  s.towelTimer--;
+  if (s.towelTimer <= 0) {
+    s.state = "goingToCabin";
+    s.path = [
+      { x: s.x, y: GATE.y },
+      { x: s.cabinCX, y: GATE.y },
+      { x: s.cabinCX, y: CABIN_Y + CABIN_H - 4 }
+    ];
+  }
+}
+
+function updateGoingToCabin(s) {
+  const arrived = updatePathFollower(s);
+  if (arrived) {
+    s.state = "inCabin";
+    s.cabinTimer = 50 + Math.floor(Math.random() * 30);
+  }
+}
+
+function updateInCabin(s) {
+  s.cabinTimer--;
+  if (s.cabinTimer <= 0) {
+    s.state = "walkingIn";
+    s.path = [
+      { x: s.x, y: GATE.y },
+      { x: RIGHT_WALKWAY_X, y: GATE.y },
+      { x: RIGHT_WALKWAY_X, y: s.jumpY },
+      { x: s.jumpX, y: s.jumpY }
+    ];
+  }
+}
+
 function updateWalkingIn(s) {
   const arrived = updatePathFollower(s);
 
@@ -2289,6 +2392,26 @@ function updateSwimmerMovement() {
       return;
     }
 
+    if (s.state === "goingToTowelSpot") {
+      updateGoingToTowelSpot(s);
+      return;
+    }
+
+    if (s.state === "layingTowel") {
+      updateLayingTowel(s);
+      return;
+    }
+
+    if (s.state === "goingToCabin") {
+      updateGoingToCabin(s);
+      return;
+    }
+
+    if (s.state === "inCabin") {
+      updateInCabin(s);
+      return;
+    }
+
     if (s.state === "walkingIn") {
       updateWalkingIn(s);
       return;
@@ -2525,6 +2648,11 @@ function updatePlayerCollisions() {
 function update() {
   updateOverlay();
 
+  if (bPressTimer > 0) {
+    bPressTimer--;
+    if (bPressTimer === 0) bPressCount = 0;
+  }
+
   if (gamePaused || gameFinished) {
     return;
   }
@@ -2683,13 +2811,12 @@ function drawDeck() {
   // =============================================
   // 3. TEGEL-PADEN (looppad voor zwemmers)
   // =============================================
-  // pad van kassa → kleedhokjes → rechtse rand van het dek
-  const CABIN_X = GATE.x - 130;
-  const CABIN_Y = GATE.y - 30;
   const PATH_W = 22;
 
-  drawTiledPath(GATE.x - 30, GATE.y, CABIN_X + 80, GATE.y, PATH_W);
-  drawTiledPath(CABIN_X,     GATE.y, deckR,          GATE.y, PATH_W);
+  // doorgaand horizontaal pad van kassa tot rechter looppad
+  drawTiledPath(GATE.x - 30, GATE.y, RIGHT_WALKWAY_X, GATE.y, PATH_W);
+  // verticale aftakking omhoog naar de kleedhokjes-ingang
+  drawTiledPath(CABIN_X + 40, GATE.y, CABIN_X + 40, CABIN_Y + CABIN_H - 2, 14);
 
   // =============================================
   // 4. LOOPPAD LANGS DE RAND VAN HET ZWEMBAD
@@ -2716,12 +2843,21 @@ function drawDeck() {
   ctx.setLineDash([]);
 
   // =============================================
-  // 5. KLEEDHOKJES (boven het looppad, ingang naar het pad toe)
+  // 5. PARASOLS OP HET GRAS (rechts van het dek)
   // =============================================
-  drawKleedhokjes(CABIN_X, GATE.y - 75);
+  drawParasol(535, 200, "#FF7043");
+  drawParasol(610, 160, "#42A5F5");
+  drawParasol(658, 220, "#66BB6A");
+  drawParasol(542, 530, "#FFD600");
+  drawParasol(630, 570, "#EC407A");
 
   // =============================================
-  // 6. KASSA
+  // 6. KLEEDHOKJES (boven het looppad, ingang naar het pad toe)
+  // =============================================
+  drawKleedhokjes(CABIN_X, CABIN_Y);
+
+  // =============================================
+  // 7. KASSA
   // =============================================
   ctx.fillStyle = "#6D4C41";
   ctx.fillRect(GATE.x - 32, GATE.y - 38, 64, 76);
@@ -2742,14 +2878,7 @@ function drawDeck() {
   ctx.textAlign = "left";
 
   // =============================================
-  // 7. PARASOLS BOVEN HET BAD (voor drawPool aanroep)
-  // =============================================
-  // boven-strip: deckT=46 .. POOL_Y=90 → parasols met voet op y≈80
-  drawParasol(POOL_X + 70,  POOL_Y - 12, "#FF7043");  // oranje links-boven
-  drawParasol(POOL_X + 240, POOL_Y - 12, "#42A5F5");  // blauw midden-boven
-
-  // =============================================
-  // 8. GRASTOEFJES EN PLANTJES LANGS DE RAND
+  // 7. GRASTOEFJES EN PLANTJES LANGS DE RAND
   // =============================================
   const tufts = [
     [20, 50], [680, 50], [20, 200], [680, 200],
@@ -2963,6 +3092,26 @@ function drawSwimmer(s) {
 
   if (s.typeName === "elderlyGroup") {
     drawElderlyGroup(s);
+    return;
+  }
+
+  // in het kleedhokje: onzichtbaar
+  if (s.state === "inCabin") return;
+
+  // op weg naar handdoek of kleedhokje: grijs (nog in gewone kleren)
+  if (
+    s.state === "goingToTowelSpot" ||
+    s.state === "layingTowel" ||
+    s.state === "goingToCabin"
+  ) {
+    const sz = SWIMMER_SIZE;
+    ctx.fillStyle = "#7a7a7a";
+    ctx.fillRect(s.x, s.y, sz, sz);
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(s.x + 1, s.y + 1, sz - 2, sz - 2);
+    ctx.fillStyle = "#9e9e9e";
+    ctx.fillRect(s.x + 3, s.y + sz / 2 - 2, sz - 6, 4);
     return;
   }
 
@@ -3191,10 +3340,10 @@ function drawHud() {
     textY + 2 * lineHeight
   );
 
-  // Russian Ball Twist (eenmalig)
-  ctx.fillStyle = russianBallTwistUsed ? "#888" : "#7CFC00";
+  // Russian Ball Twist (geheim)
+  ctx.fillStyle = russianBallTwistUsed ? "#555" : "#7CFC00";
   ctx.fillText(
-    russianBallTwistUsed ? "TWIST: op" : "TWIST: [B]",
+    russianBallTwistUsed ? "★" : "★",
     x + padding,
     textY + 3 * lineHeight
   );
@@ -3599,17 +3748,36 @@ function drawFightClouds() {
   ctx.globalAlpha = 1;
 }
 
+function drawTowels() {
+  towels.forEach(t => {
+    ctx.save();
+    ctx.translate(t.x + 13, t.y + 5);
+    ctx.rotate(t.angle);
+    ctx.fillStyle = t.color;
+    ctx.fillRect(-13, -5, 28, 10);
+    ctx.fillStyle = "rgba(255,255,255,0.38)";
+    for (let i = -11; i < 16; i += 5) {
+      ctx.fillRect(i, -5, 2, 10);
+    }
+    ctx.strokeStyle = "rgba(0,0,0,0.18)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-13, -5, 28, 10);
+    ctx.restore();
+  });
+}
+
 function drawBelowPoolDecorations() {
-  // parasols ONDER het bad — ná drawPool() tekenen zodat het bad er
-  // niet overheen geschreven wordt; de pool border-rect loopt tot y≈594
-  drawParasol(POOL_X + 70,  POOL_Y + POOL_HEIGHT + 38, "#66BB6A");
-  drawParasol(POOL_X + 240, POOL_Y + POOL_HEIGHT + 38, "#FFD600");
+  // parasols op het gras rechts van het dek (onder/naast het bad)
+  drawParasol(545, 680, "#FF7043");
+  drawParasol(608, 740, "#42A5F5");
+  drawParasol(558, 840, "#FFD600");
 }
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawDeck();
+  drawTowels();
   drawPool();
   drawBelowPoolDecorations();
   drawLadders();
@@ -3715,9 +3883,15 @@ document.addEventListener("keydown", e => {
 
   if (gamePaused || gameFinished) return;
 
-  // Russian Ball Twist (1x per game)
+  // Russian Ball Twist: geheim — 3× drukken binnen 2.5 seconden
   if (e.key === "b" || e.key === "B") {
-    invokeRussianBallTwist();
+    bPressCount++;
+    bPressTimer = 150;
+    if (bPressCount >= 3) {
+      bPressCount = 0;
+      bPressTimer = 0;
+      invokeRussianBallTwist();
+    }
     return;
   }
 
