@@ -179,6 +179,10 @@ const RIGHT_WALKWAY_X = POOL_X + POOL_WIDTH + DECK_MARGIN;
 const TOP_WALKWAY_Y = POOL_Y - DECK_MARGIN;
 const BOTTOM_WALKWAY_Y = POOL_Y + POOL_HEIGHT + DECK_MARGIN;
 
+// ── Frogger-view: 1.8× zoom, camera follows player vertically ──
+const POOL_SCALE     = 1.8;
+const VISIBLE_POOL_H = POOL_HEIGHT / POOL_SCALE; // ≈267 world-px visible at a time
+
 const LADDERS = [
   // BOVEN (korte zijde)
   { name: "boven links", side: "top", x: POOL_X + 20, y: POOL_Y - 8 },
@@ -244,6 +248,9 @@ let bPressTimer = 0;
 // handdoeken die zwemmers op het gras hebben neergelegd
 let towels = [];
 
+// world-space vertical scroll offset for the zoomed pool viewport (0…POOL_HEIGHT-VISIBLE_POOL_H)
+let cameraY = 0;
+
 // =====================================================
 // AGENT MODE (aansturing door een Claude-playtester)
 // =====================================================
@@ -298,6 +305,7 @@ function resetForNextLevel(oldSubLaneCount, newSubLaneCount) {
   hitCooldown = 0;
   timeLeft = 90;
   towels = [];
+  cameraY = 0;
 
   player.penaltyTimer = 0;
   player.color = PLAYER_COLOR;
@@ -2676,6 +2684,13 @@ function update() {
   updateSwimmerCollisions();
   updatePlayerCollisions();
   updateFightClouds();
+
+  // smooth-follow camera for Frogger view
+  const _targetCam = Math.max(0, Math.min(
+    player.y - POOL_Y - VISIBLE_POOL_H / 2,
+    POOL_HEIGHT - VISIBLE_POOL_H
+  ));
+  cameraY += (_targetCam - cameraY) * 0.08;
 }
 
 // =====================================================
@@ -3218,16 +3233,6 @@ function drawPlayer() {
   // witte streep zodat de speler altijd herkenbaar is
   ctx.fillStyle = "white";
   ctx.fillRect(player.x + 4, player.y + psize / 2 - 2, psize - 8, 4);
-
-  if (!player.swimming) {
-    ctx.fillStyle = "black";
-    ctx.font = "14px monospace";
-    ctx.fillText(
-      "SPACE = JUMP INTO THE WATER",
-      POOL_X + 80,
-      POOL_Y + POOL_HEIGHT + 45
-    );
-  }
 
   // =========================
   // ✅ KIES JE BAAN (nieuw!)
@@ -3788,30 +3793,60 @@ function drawBelowPoolDecorations() {
   drawParasol(558, 840, "#FFD600");
 }
 
+// thin scrollbar on the right edge of the pool showing camera position
+function drawCameraIndicator() {
+  const barX = canvas.width - 9;
+  const barY = POOL_Y;
+  const barH = POOL_HEIGHT;
+  const thumbH = Math.round(barH * (VISIBLE_POOL_H / POOL_HEIGHT));
+  const maxScroll = POOL_HEIGHT - VISIBLE_POOL_H;
+  const thumbY = barY + Math.round((cameraY / maxScroll) * (barH - thumbH));
+
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.fillRect(barX, barY, 7, barH);
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.fillRect(barX + 1, thumbY, 5, thumbH);
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawDeck();
-  drawTowels();
-  drawPool();
-  drawBelowPoolDecorations();
-  drawLadders();
 
-  // clip swimmers to pool bounds so sprites never bleed outside the water
+  // ── ZOOMED POOL VIEWPORT (1.8×, camera follows player) ──────────────────
+  // world (POOL_X, POOL_Y + cameraY) maps to screen (0, POOL_Y)
+  const _tx = 0 - POOL_X * POOL_SCALE;
+  const _ty = POOL_Y - (POOL_Y + cameraY) * POOL_SCALE;
+
   ctx.save();
   ctx.beginPath();
-  ctx.rect(POOL_X - SWIMMER_SIZE, POOL_Y - SWIMMER_SIZE,
-           POOL_WIDTH + 2 * SWIMMER_SIZE, POOL_HEIGHT + 2 * SWIMMER_SIZE);
+  // extend clip 45px above pool top so the pre-swim player sprite is visible
+  ctx.rect(0, POOL_Y - 45, canvas.width, POOL_HEIGHT + 45);
   ctx.clip();
+  ctx.translate(_tx, _ty);
+  ctx.scale(POOL_SCALE, POOL_SCALE);
+
+  drawPool();
+  drawLadders();
   swimmers.forEach(drawSwimmer);
-  ctx.restore();
-
   drawPlayer();
-
   drawFightClouds();
 
-  drawHud();
+  ctx.restore();
+  // ── END ZOOM ─────────────────────────────────────────────────────────────
 
+  drawCameraIndicator();
+
+  // pre-swim hint lives outside the zoom so it doesn't scale with the pool
+  if (!player.swimming && !gamePaused && !gameFinished) {
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.font = "bold 14px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("SPACE = JUMP INTO THE WATER", canvas.width / 2, POOL_Y + POOL_HEIGHT + 22);
+    ctx.textAlign = "left";
+  }
+
+  drawHud();
   drawOverlay();
 }
 
