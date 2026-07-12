@@ -1047,7 +1047,7 @@ function applyPlayerPenalty(pushBack) {
   if (hitCooldown > 0) return;
 
   hits++;
-  hitCooldown = 35;
+  hitCooldown = 180; // match penaltyTimer so player can't take 5 hits while visually stunned
 
   agentMetrics.playerHits++;
   logAgentEvent("playerHit", { hits });
@@ -1596,7 +1596,9 @@ function createSwimmer(randomPosition) {
     state = "swimming";
 
     if (randomPosition) {
-      y = POOL_Y + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE);
+      // keep elderly groups away from entry edges so they don't instantly crush the player
+      const EDGE_GUARD = 120;
+      y = POOL_Y + EDGE_GUARD + Math.random() * (POOL_HEIGHT - SWIMMER_SIZE - 2 * EDGE_GUARD);
     } else {
       y = fromTop ? POOL_Y : POOL_Y + POOL_HEIGHT - SWIMMER_SIZE;
     }
@@ -3324,7 +3326,7 @@ function drawHud() {
   textY = y + padding + 30;
 
   ctx.fillText(
-    "COLLISIONS: " + hits,
+    "COLLISIONS: " + hits + "/" + maxHits,
     x + padding,
     textY
   );
@@ -3795,7 +3797,14 @@ function draw() {
   drawBelowPoolDecorations();
   drawLadders();
 
+  // clip swimmers to pool bounds so sprites never bleed outside the water
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(POOL_X - SWIMMER_SIZE, POOL_Y - SWIMMER_SIZE,
+           POOL_WIDTH + 2 * SWIMMER_SIZE, POOL_HEIGHT + 2 * SWIMMER_SIZE);
+  ctx.clip();
   swimmers.forEach(drawSwimmer);
+  ctx.restore();
 
   drawPlayer();
 
