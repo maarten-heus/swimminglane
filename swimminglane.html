@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <title>Zwembad Game</title>
+  <title>Swimming Lane</title>
   <style>
     body {
       margin: 0;
@@ -107,15 +107,15 @@
 <div id="touch-controls">
   <!-- rij 1: snelheid + Ball Twist -->
   <div class="touch-row">
-    <button data-key="ArrowDown" aria-label="langzamer">Langzamer</button>
-    <button data-key="KeyB"      aria-label="speciaal" class="btn-secret">•••</button>
-    <button data-key="ArrowUp"   aria-label="sneller">Sneller</button>
+    <button data-key="ArrowDown" aria-label="slower">Slower</button>
+    <button data-key="KeyB"      aria-label="secret" class="btn-secret">•••</button>
+    <button data-key="ArrowUp"   aria-label="faster">Faster</button>
   </div>
-  <!-- rij 2: ◀  DUIK/START  ▶ -->
+  <!-- row 2: ◀  DIVE/START  ▶ -->
   <div class="touch-row">
-    <button data-key="ArrowLeft"  aria-label="baan naar links"  class="btn-nav">◀</button>
-    <button data-key="Space"      aria-label="start / duik"     class="btn-dive">DUIK / START</button>
-    <button data-key="ArrowRight" aria-label="baan naar rechts" class="btn-nav">▶</button>
+    <button data-key="ArrowLeft"  aria-label="lane left"   class="btn-nav">◀</button>
+    <button data-key="Space"      aria-label="start / dive" class="btn-dive">DIVE / START</button>
+    <button data-key="ArrowRight" aria-label="lane right"  class="btn-nav">▶</button>
   </div>
 </div>
 
@@ -167,10 +167,11 @@ const CABIN_W     = 80;
 const CABIN_H     = 60;
 const CABIN_COUNT = 3;
 
-// handdoek-plekken op het gras (rechts van het dek, x > 514)
+// towel spots on the grass (below the pool deck, y > 625, x > 514)
 const TOWEL_SPOTS = [
-  { x: 527, y: 358 }, { x: 560, y: 353 }, { x: 601, y: 360 }, { x: 639, y: 355 },
-  { x: 525, y: 421 }, { x: 561, y: 427 }, { x: 600, y: 419 }, { x: 640, y: 424 }
+  { x: 528, y: 640 }, { x: 570, y: 655 }, { x: 614, y: 638 }, { x: 656, y: 652 },
+  { x: 532, y: 728 }, { x: 574, y: 742 }, { x: 618, y: 726 }, { x: 660, y: 740 },
+  { x: 540, y: 816 }, { x: 582, y: 830 }
 ];
 const TOWEL_COLORS = ["#FF6B6B", "#FFD93D", "#6BCB77", "#4D96FF", "#FF922B", "#CC5DE8"];
 
@@ -363,7 +364,7 @@ function checkLevelProgress() {
   const oldSubLaneCount = getSubLanesPerLane();
 
   const clearedText =
-    clearedLevel === 0 ? "INTRO GEHAALD" : "LEVEL " + clearedLevel + " GEHAALD";
+    clearedLevel === 0 ? "TRAINING CLEARED" : "LEVEL " + clearedLevel + " CLEARED";
 
   agentMetrics.levelsCleared.push({ level: clearedLevel, timeLeft, frame: agentFrameCount });
   logAgentEvent("levelCleared", { clearedLevel, timeLeft });
@@ -398,32 +399,32 @@ function checkLevelProgress() {
 
 const LEVEL_INTROS = {
   0:  {
-        title: "OEFENBAAN",
+        title: "TRAINING LANE",
         duration: 900,
         lines: [
-          "Even oefenen — nog geen andere zwemmers",
+          "Practice run — no other swimmers yet",
           "",
-          "←  →     wissel van baan",
-          "↑ sneller       ↓ langzamer",
-          "SPATIE   springen in het water",
+          "←  →     change lane",
+          "↑ faster       ↓ slower",
+          "SPACE   jump into the water",
           "",
-          "Duik (SPATIE) om een witte lijn",
-          "over te steken — anders word je afgeremd!",
-          "Elke voltooide baan geeft 1 duik terug",
+          "Dive (SPACE) to cross a white line",
+          "without slowing down!",
+          "Each completed lap gives 1 dive back",
           "",
-          "Zwem 3 baantjes   ( SPATIE = start )"
+          "Swim 3 laps   ( SPACE = start )"
         ]
       },
-  1:  { title: "LEVEL 1",  typeName: "ordinary",        lines: ["Gewone zwemmers", "Net zo snel als jij"] },
-  2:  { title: "LEVEL 2",  typeName: "slower",          lines: ["Langzamere zwemmer", "Houd rekening met tempo"] },
-  3:  { title: "LEVEL 3",  typeName: "faster",          lines: ["Snellere zwemmer", "Iets sneller dan jij"] },
-  4:  { title: "LEVEL 4",  typeName: "elderlySingle",   lines: ["Bejaarde zwemmer", "Heel langzaam — geef voorrang!"] },
-  5:  { title: "LEVEL 5",  typeName: "friendlyCrawl",   lines: ["Vriendelijke borstcrawl", "Snel, maar wijkt netjes uit"] },
-  6:  { title: "LEVEL 6",  typeName: "elderlyGroup",    lines: ["Groep bejaarden", "Langzaam en lekker breed"] },
-  7:  { title: "LEVEL 7",  typeName: "unfriendlyCrawl", lines: ["Onvriendelijke borstcrawl", "Snel en let NIET op!"] },
-  8:  { title: "LEVEL 8",  typeName: "bomb",            lines: ["BOMMETJE!", "Kind springt van de kant"] },
-  9:  { title: "LEVEL 9",  typeName: "raft",            lines: ["Kinderen op een vlot", "Drijft alle kanten op (max 2)"] },
-  10: { title: "EINDBAAS", typeName: "boss",            lines: ["Linie van duikers!", "DUIK eronderdoor met SPACE"] }
+  1:  { title: "LEVEL 1",     typeName: "ordinary",        lines: ["Regular swimmers", "Same speed as you"] },
+  2:  { title: "LEVEL 2",     typeName: "slower",          lines: ["Slower swimmer", "Mind the pace"] },
+  3:  { title: "LEVEL 3",     typeName: "faster",          lines: ["Faster swimmer", "Slightly faster than you"] },
+  4:  { title: "LEVEL 4",     typeName: "elderlySingle",   lines: ["Elderly swimmer", "Very slow — give way!"] },
+  5:  { title: "LEVEL 5",     typeName: "friendlyCrawl",   lines: ["Friendly crawl", "Fast, but moves aside nicely"] },
+  6:  { title: "LEVEL 6",     typeName: "elderlyGroup",    lines: ["Elderly group", "Slow and takes up lots of space"] },
+  7:  { title: "LEVEL 7",     typeName: "unfriendlyCrawl", lines: ["Aggressive crawl", "Fast and does NOT look out!"] },
+  8:  { title: "LEVEL 8",     typeName: "bomb",            lines: ["CANNONBALL!", "Kid jumps from the side"] },
+  9:  { title: "LEVEL 9",     typeName: "raft",            lines: ["Kids on a raft", "Drifts in all directions (max 2)"] },
+  10: { title: "FINAL BOSS",  typeName: "boss",            lines: ["Line of divers!", "DIVE underneath with SPACE"] }
 };
 
 // het type dat in dit level nieuw geïntroduceerd wordt
@@ -1301,7 +1302,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 1 — net zo snel als de speler (~2.0)
   ordinary: {
-    label: "Gewone zwemmer",
+    label: "Regular swimmer",
     color: "#35C759",
     stripe: "white",
     speedMin: 22,
@@ -1313,7 +1314,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 2 — iets langzamer
   slower: {
-    label: "Langzamere zwemmer",
+    label: "Slower swimmer",
     color: "#1976D2",
     stripe: "white",
     speedMin: 11,
@@ -1345,7 +1346,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 3 — iets sneller dan de speler
   faster: {
-    label: "Snellere zwemmer",
+    label: "Faster swimmer",
     color: "#C0CA33",
     stripe: "black",
     speedMin: 30,
@@ -1357,7 +1358,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 4 — losse bejaarde, heel langzaam, voorrang
   elderlySingle: {
-    label: "Bejaarde zwemmer",
+    label: "Elderly swimmer",
     color: "#CE93D8",
     stripe: "white",
     speedMin: 4,
@@ -1369,7 +1370,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 5 — vriendelijke crawl, snel maar wijkt netjes uit
   friendlyCrawl: {
-    label: "Vriendelijke borstcrawl",
+    label: "Friendly crawl",
     color: "#00BCD4",
     stripe: "black",
     speedMin: 28,
@@ -1398,7 +1399,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 6 — groep bejaarden, langzaam en breed
   elderlyGroup: {
-    label: "Groep bejaarden",
+    label: "Elderly group",
     color: "#B06AD9",
     stripe: "white",
     speedMin: 3,
@@ -1410,7 +1411,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 7 — onvriendelijke crawl, snel en let niet op
   unfriendlyCrawl: {
-    label: "Onvriendelijke borstcrawl",
+    label: "Aggressive crawl",
     color: "#111111",
     stripe: "white",
     speedMin: 30,
@@ -1422,7 +1423,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 8 — bommetje, springt van de kant
   bomb: {
-    label: "Bommetje",
+    label: "Cannonball",
     color: "#FF7043",
     stripe: "white",
     speedMin: 0,
@@ -1434,7 +1435,7 @@ const SWIMMER_TYPES = {
 
   // LEVEL 9 — kinderen op een vlot, drijven alle kanten op
   raft: {
-    label: "Vlot met kinderen",
+    label: "Raft with kids",
     color: "#8D6E63",
     stripe: "#5D4037",
     speedMin: 0,
@@ -1608,13 +1609,13 @@ function createSwimmer(randomPosition) {
       x = GATE.x;
       y = GATE.y;
 
-      // 40% kans: zwemmer legt eerst handdoek neer op het gras
+      // 40% chance: swimmer will lay a towel on the grass AFTER changing
       const wantsTowel = Math.random() < 0.4;
       const freeSpot = wantsTowel
         ? TOWEL_SPOTS.find(sp =>
             !towels.some(t => Math.abs(t.x - sp.x) < 28 && Math.abs(t.y - sp.y) < 28) &&
-            !swimmers.some(s => s.state === "goingToTowelSpot" &&
-              Math.abs(s.towelX - sp.x) < 28 && Math.abs(s.towelY - sp.y) < 28)
+            !swimmers.some(s => s.towelX && Math.abs(s.towelX - sp.x) < 28 &&
+              Math.abs(s.towelY - sp.y) < 28)
           )
         : null;
 
@@ -1623,15 +1624,14 @@ function createSwimmer(randomPosition) {
         towelY = freeSpot.y;
         towelColor = TOWEL_COLORS[Math.floor(Math.random() * TOWEL_COLORS.length)];
         towelAngle = (Math.random() - 0.5) * 0.5;
-        state = "goingToTowelSpot";
-        path = [{ x: towelX, y: towelY }];
-      } else {
-        state = "goingToCabin";
-        path = [
-          { x: cabinCX, y: GATE.y },
-          { x: cabinCX, y: CABIN_Y + CABIN_H - 4 }
-        ];
       }
+
+      // always go to changing room first, towel is laid afterwards
+      state = "goingToCabin";
+      path = [
+        { x: cabinCX, y: GATE.y },
+        { x: cabinCX, y: CABIN_Y + CABIN_H - 4 }
+      ];
     }
   }
 
@@ -2099,11 +2099,13 @@ function updateGoingToTowelSpot(s) {
 function updateLayingTowel(s) {
   s.towelTimer--;
   if (s.towelTimer <= 0) {
-    s.state = "goingToCabin";
+    // towel laid — now head to the pool
+    s.state = "walkingIn";
     s.path = [
       { x: s.x, y: GATE.y },
-      { x: s.cabinCX, y: GATE.y },
-      { x: s.cabinCX, y: CABIN_Y + CABIN_H - 4 }
+      { x: RIGHT_WALKWAY_X, y: GATE.y },
+      { x: RIGHT_WALKWAY_X, y: s.jumpY },
+      { x: s.jumpX, y: s.jumpY }
     ];
   }
 }
@@ -2119,13 +2121,23 @@ function updateGoingToCabin(s) {
 function updateInCabin(s) {
   s.cabinTimer--;
   if (s.cabinTimer <= 0) {
-    s.state = "walkingIn";
-    s.path = [
-      { x: s.x, y: GATE.y },
-      { x: RIGHT_WALKWAY_X, y: GATE.y },
-      { x: RIGHT_WALKWAY_X, y: s.jumpY },
-      { x: s.jumpX, y: s.jumpY }
-    ];
+    if (s.towelX && s.towelY) {
+      // changed — now go lay the towel on the grass
+      s.state = "goingToTowelSpot";
+      s.path = [
+        { x: s.x, y: GATE.y },
+        { x: s.towelX, y: s.towelY }
+      ];
+    } else {
+      // no towel — go straight to the pool
+      s.state = "walkingIn";
+      s.path = [
+        { x: s.x, y: GATE.y },
+        { x: RIGHT_WALKWAY_X, y: GATE.y },
+        { x: RIGHT_WALKWAY_X, y: s.jumpY },
+        { x: s.jumpX, y: s.jumpY }
+      ];
+    }
   }
 }
 
@@ -2740,7 +2752,7 @@ function drawKleedhokjes(x, y) {
   ctx.fillStyle = "#5D4037";
   ctx.font = "bold 9px monospace";
   ctx.textAlign = "center";
-  ctx.fillText("KLEEDKAMERS", x + W / 2, y - 5);
+  ctx.fillText("CHANGING", x + W / 2, y - 5);
   ctx.textAlign = "left";
 }
 
@@ -2873,7 +2885,7 @@ function drawDeck() {
   ctx.fillStyle = "white";
   ctx.font = "bold 9px monospace";
   ctx.textAlign = "center";
-  ctx.fillText("KASSA", GATE.x, GATE.y + 4);
+  ctx.fillText("TICKETS", GATE.x, GATE.y + 4);
   ctx.fillText("€", GATE.x, GATE.y + 18);
   ctx.textAlign = "left";
 
@@ -3098,12 +3110,8 @@ function drawSwimmer(s) {
   // in het kleedhokje: onzichtbaar
   if (s.state === "inCabin") return;
 
-  // op weg naar handdoek of kleedhokje: grijs (nog in gewone kleren)
-  if (
-    s.state === "goingToTowelSpot" ||
-    s.state === "layingTowel" ||
-    s.state === "goingToCabin"
-  ) {
+  // walking to changing room: grey civilian clothes
+  if (s.state === "goingToCabin") {
     const sz = SWIMMER_SIZE;
     ctx.fillStyle = "#7a7a7a";
     ctx.fillRect(s.x, s.y, sz, sz);
@@ -3112,6 +3120,12 @@ function drawSwimmer(s) {
     ctx.strokeRect(s.x + 1, s.y + 1, sz - 2, sz - 2);
     ctx.fillStyle = "#9e9e9e";
     ctx.fillRect(s.x + 3, s.y + sz / 2 - 2, sz - 6, 4);
+    return;
+  }
+
+  // laying towel on grass after changing: already in swimwear, use type color
+  if (s.state === "goingToTowelSpot" || s.state === "layingTowel") {
+    drawSingleSwimmerBlock(s.x, s.y, s, 1);
     return;
   }
 
@@ -3207,7 +3221,7 @@ function drawPlayer() {
     ctx.fillStyle = "black";
     ctx.font = "14px monospace";
     ctx.fillText(
-      "SPACE = SPRING IN HET WATER",
+      "SPACE = JUMP INTO THE WATER",
       POOL_X + 80,
       POOL_Y + POOL_HEIGHT + 45
     );
@@ -3255,12 +3269,12 @@ function drawHud() {
   ctx.fillStyle = "white";
 
   ctx.font = "bold 14px monospace";
-  ctx.fillText("ZWEMBAD", x + padding, y + padding + 8);
+  ctx.fillText("POOL", x + padding, y + padding + 8);
 
   ctx.font = "16px monospace";
 
   ctx.fillText(
-    "ZWEMMERS: " + swimmers.length,
+    "SWIMMERS: " + swimmers.length,
     x + padding,
     y + padding + 35
   );
@@ -3276,7 +3290,7 @@ function drawHud() {
   ctx.fillStyle = "white";
 
   ctx.font = "bold 14px monospace";
-  ctx.fillText("LEVEL", x + padding, y + padding + 8);
+  ctx.fillText("LEVEL", x + padding, y + padding + 8); // same in English
 
   ctx.font = "16px monospace";
 
@@ -3284,11 +3298,10 @@ function drawHud() {
 
   ctx.fillText("LEVEL: " + (level === 0 ? "INTRO" : level), x + padding, textY);
 
-  ctx.fillText("TIJD: " + timeLeft, x + padding, textY + lineHeight);
+  ctx.fillText("TIME: " + timeLeft, x + padding, textY + lineHeight);
 
-  // ✅ slash notatie
   ctx.fillText(
-    "BANEN: " + lanesThisLevel + "/" + getLanesTarget(),
+    "LAPS: " + lanesThisLevel + "/" + getLanesTarget(),
     x + padding,
     textY + 2 * lineHeight
   );
@@ -3304,23 +3317,23 @@ function drawHud() {
   ctx.fillStyle = "white";
 
   ctx.font = "bold 14px monospace";
-  ctx.fillText("SPELER", x + padding, y + padding + 8);
+  ctx.fillText("PLAYER", x + padding, y + padding + 8);
 
   ctx.font = "16px monospace";
 
   textY = y + padding + 30;
 
   ctx.fillText(
-    "BOTSINGEN: " + hits,
+    "COLLISIONS: " + hits,
     x + padding,
     textY
   );
 
   // ✅ duik-meter: blokjes tonen hoeveel duiken er over zijn
   if (player.divesLeft > 90) {
-    ctx.fillText("DUIKEN: ∞", x + padding, textY + lineHeight);
+    ctx.fillText("DIVES: ∞", x + padding, textY + lineHeight);
   } else {
-    ctx.fillText("DUIKEN:", x + padding, textY + lineHeight);
+    ctx.fillText("DIVES:", x + padding, textY + lineHeight);
 
     for (let i = 0; i < MAX_DIVES_PER_LEVEL; i++) {
       ctx.fillStyle = i < player.divesLeft ? "#4FC3F7" : "#555";
@@ -3335,7 +3348,7 @@ function drawHud() {
   ctx.fillStyle = player.penaltyTimer > 0 ? "orange" : "white";
 
   ctx.fillText(
-    "STRAF: " + penaltySeconds,
+    "PENALTY: " + penaltySeconds,
     x + padding,
     textY + 2 * lineHeight
   );
@@ -3675,10 +3688,10 @@ function drawOverlay() {
     });
   }
 
-  if (!gameFinished && overlay.text.indexOf("GEHAALD") >= 0) {
+  if (!gameFinished && overlay.text.indexOf("CLEARED") >= 0) {
     ctx.font = "18px monospace";
     ctx.fillStyle = "white";
-    ctx.fillText("Volgend level start zo", cx, cy + 48);
+    ctx.fillText("Next level starting...", cx, cy + 48);
   }
 
   // herstel standaard tekstuitlijning voor de rest van de tekeningen
@@ -3803,7 +3816,7 @@ function showGameOverOverlay(title, reason) {
 
   overlay = {
     text: title,
-    lines: [reason, "", "SPATIE = probeer dit level opnieuw"],
+    lines: [reason, "", "SPACE = try this level again"],
     gameOver: true,
     timer: 999999,
     duration: 999999,
@@ -3836,9 +3849,9 @@ function tick() {
 
   if (!(timeLeft > 0 && hits < maxHits) && !gameFinished) {
     if (hits >= maxHits && !overlay) {
-      showGameOverOverlay("BADMEESTER: ERUIT!", "Te veel botsingen!");
+      showGameOverOverlay("LIFEGUARD: OUT!", "Too many collisions!");
     } else if (timeLeft <= 0 && !overlay) {
-      showGameOverOverlay("ZWEMBAD DICHT!", "De tijd is om!");
+      showGameOverOverlay("POOL CLOSED!", "Time's up!");
     }
   }
 }
